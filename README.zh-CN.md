@@ -4,6 +4,8 @@
 
 [English](README.md) | [中文文档](README.zh-CN.md)
 
+**以智谱 Z.ai GLM-5.3 作为驱动 Agent 完成开发与端到端实测。** 兼容所有 MCP 宿主：Claude Desktop、Z Code（GLM Coding Plan）、WorkBuddy、Cursor、Cline、自研 Agent。
+
 大模型时代，传统 NLP 库没有过时，只是换了岗位：它们不再是"NLP 引擎"，而是引擎底下的**确定性工具层**——批量预处理近乎零成本、字符偏移永远精确、结果可复现、完全离线、零幻觉。本项目把这层能力暴露给所有支持 MCP 的客户端（Claude Desktop、WorkBuddy、Cursor、自研 Agent……），按**能力（capability）**而非"一个库一个壳"来组织。
 
 ## 为什么还要传统 NLP
@@ -16,6 +18,16 @@
 | 省 token 的两级漏斗（粗筛 → 精判） | — | 天生为此设计 |
 | 可解释语义（WordNet、知网义原） | 没有原生接口 | 一等公民工具 |
 | 可复现的科研流水线 | 输出会变 | 确定性 |
+
+### 这个项目是给谁用的
+
+- **RAG / 检索工程师**——`sent_split` + `tokenize` 是确定性分块的地基；`keyword_extract` 在跑 embedding 之前就给每个块挂上几乎零成本的元数据。
+- **知识图谱 / GraphRAG 建设者**——`openie_triples` 以≈0 成本挖出带来源 span 的 (S,P,O) 候选三元组；LLM 只在最后做本体归一化与校验。
+- **心疼 token 账单的 Agent 开发者**——两级漏斗：传统 NER/关键词粗筛，只把候选送 LLM 精判。同样的答案，上下文少一个量级。
+- **隐私与合规敏感的部署**——所有工具本地离线运行，文本不出进程，结果逐字节可复现。
+- **科研人员**——精确偏移、带版本号的引擎归属、确定性输出，流水线可审计、论文可辩护。
+
+**一句话价值**：LLM 时代传统 NLP 的价值不在于"比大模型更懂语言"，而在于**做大模型底下那层便宜、精确、可复现的传感器与预处理器**。本项目让这层能力通过 MCP 被任何 Agent 直接调用。
 
 ## 设计原则
 
@@ -71,6 +83,21 @@ spaCy  jieba       NLTK        OpenHowNet
 
 `openie_triples` 额外返回 `confidence` 和来源 `span` + `sentence`——三元组是"带出处的候选"，下游接本体对齐或 LLM 校验都方便。
 
+## 兼容性与版本
+
+所有被包装的工具包都按**当前版本 API** 编写，版本约束刻意覆盖最新发布：
+
+| 包 | 支持范围 | 成文时最新版 | 说明 |
+|---|---|---|---|
+| Python | >= 3.10 | 3.13 / 3.14 | spaCy wheel 覆盖 3.9–3.14 |
+| [mcp](https://pypi.org/project/mcp/) SDK | `>=1.2, <3` | 2.0.x | **2.0 把 `FastMCP` 改名为 `MCPServer`** 并删除旧导入路径；兼容垫片（`src/classic_nlp_mcp/_compat.py`）双版本通吃 |
+| [jieba](https://pypi.org/project/jieba/) | `>=0.42.1` | 0.42.1（多年稳定，纯 Python） | 唯一必装依赖——中文开箱即用 |
+| [spaCy](https://pypi.org/project/spacy/) | `>=3.7`（extras `en`） | 3.8.x（2026-08） | 当前 `spacy.load` / `Doc` / `Span` API；`en_core_web_sm`、`zh_core_web_sm` 均支持 |
+| [NLTK](https://pypi.org/project/nltk/) | `>=3.8`（extras `semantic`） | 3.10.x | `nltk.corpus.wordnet` API 在 3.x 全线稳定 |
+| [OpenHowNet](https://pypi.org/project/OpenHowNet/) | 任意（extras `semantic`） | 0.0.x（2020 年发布，数据内置） | 上游许久未发版；已做防御式包装（`try_import` + 优雅降级），绝不会拖垮服务 |
+
+所有可选依赖都带可操作的安装提示优雅降级——只装 `jieba` 服务也能完整启动并保持可用。
+
 ## 安装
 
 ```bash
@@ -96,9 +123,11 @@ pip install -e ".[all,dev]"
 pytest
 ```
 
-## MCP 客户端配置
+## 接入你的 Agent 宿主（MCP 配置）
 
-通用 `mcp.json`（Claude Desktop / WorkBuddy / Cursor / Cline 均适用）：
+classic-nlp-mcp 是标准 **stdio** MCP 服务，任何讲 MCP 的客户端都能接。本项目以**智谱 Z.ai GLM-5.3** 作为驱动 Agent 完成开发与端到端实测。
+
+### Claude Desktop / Cursor / Cline / 通用 `mcpServers` 客户端
 
 ```json
 {
@@ -111,7 +140,29 @@ pytest
 }
 ```
 
-或使用安装后的命令行入口：
+### Z Code（智谱 GLM Coding Plan / GLM-5.3）
+
+[Z Code](https://docs.z.ai/) 使用同款标准 `mcpServers` 配置块——加进 Z Code 的 MCP 设置后，GLM-5.3 Agent 就能在编程会话里直接调用 `tokenize`、`openie_triples`、`annotate_full` 等工具：
+
+```json
+{
+  "mcpServers": {
+    "classic-nlp": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["-m", "classic_nlp_mcp"]
+    }
+  }
+}
+```
+
+Z Code 典型用法：对模块文档字符串跑 `annotate_full` → 留下 `confidence ≥ 0.35` 的 `openie_triples` → 让 GLM-5.3 按你的本体做归一化。便宜且确定性的抽取先行，昂贵的模型推理只花在值得的地方。
+
+### WorkBuddy
+
+把同样的配置块加进 `~/.workbuddy/mcp.json`，然后在连接器管理页信任该服务。
+
+### 或使用安装后的命令行入口
 
 ```json
 {

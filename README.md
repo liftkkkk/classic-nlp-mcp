@@ -4,6 +4,8 @@
 
 [English](README.md) | [中文文档](README.zh-CN.md)
 
+**Developed and end-to-end tested with Z.ai GLM-5.3 as the driving agent.** Works with any MCP host: Claude Desktop, Z Code (GLM Coding Plan), WorkBuddy, Cursor, Cline, or your own agent.
+
 In the LLM era, classical NLP libraries did not become useless — they changed jobs. They are no longer the *engine*; they are the **deterministic tool layer** underneath one: batch preprocessing at near-zero cost, exact character spans, reproducible results, fully offline, zero hallucination. This project exposes that layer to any MCP-compatible agent (Claude Desktop, WorkBuddy, Cursor, your own agent...) as **capability-level tools**, not as one-wrapper-per-library glue.
 
 ## Why
@@ -16,6 +18,16 @@ In the LLM era, classical NLP libraries did not become useless — they changed 
 | Cheap two-stage funnel (coarse NER → LLM refine) | — | built for it |
 | Interpretable semantics (WordNet, HowNet sememes 义原) | no native interface | first-class tools |
 | Reproducible research pipelines | varies | deterministic, cached logic |
+
+### Who is this for?
+
+- **RAG / search engineers** — `sent_split` + `tokenize` are the foundation of deterministic chunking; `keyword_extract` attaches cheap metadata to every chunk before embeddings ever run.
+- **Knowledge-graph / GraphRAG builders** — `openie_triples` mines candidate (S, P, O) triples with provenance spans at ≈0 cost; the LLM only normalizes and verifies against your ontology afterwards.
+- **Agent developers watching their token bill** — the two-stage funnel: classical NER/keyword pre-filter, then send only the candidates to the LLM. Same answer, order-of-magnitude less context.
+- **Privacy- and compliance-sensitive deployments** — every tool runs locally and offline. Text never leaves the process, and results are reproducible byte-for-byte.
+- **Researchers** — exact spans, versioned engine attribution and deterministic output make pipelines auditable and papers defensible.
+
+**The one-line value**: classical NLP in the LLM era is not about "understanding language better than an LLM" — it is about being the **cheap, exact, reproducible sensor and preprocessor layer** underneath one. This project makes that layer callable by any agent over MCP.
 
 ## Design principles
 
@@ -71,6 +83,21 @@ Every tool returns the same envelope:
 
 `openie_triples` additionally returns `confidence` and the source `span` + `sentence`, so triples are *candidates with provenance* — ready for ontology alignment or LLM verification downstream.
 
+## Compatibility & versions
+
+Written against the **current** APIs of every wrapped toolkit; the pinned ranges deliberately include the latest releases:
+
+| Package | Supported range | Latest at time of writing | Notes |
+|---|---|---|---|
+| Python | >= 3.10 | 3.13 / 3.14 | spaCy wheels cover 3.9–3.14 |
+| [mcp](https://pypi.org/project/mcp/) SDK | `>=1.2, <3` | 2.0.x | **2.0 renamed `FastMCP` → `MCPServer`** and removed the old import path; the compat shim (`src/classic_nlp_mcp/_compat.py`) supports both majors |
+| [jieba](https://pypi.org/project/jieba/) | `>=0.42.1` | 0.42.1 (stable, pure Python) | base dependency — Chinese works out of the box |
+| [spaCy](https://pypi.org/project/spacy/) | `>=3.7` (extras `en`) | 3.8.x (2026-08) | current `spacy.load` / `Doc` / `Span` API; `en_core_web_sm`, `zh_core_web_sm` both supported |
+| [NLTK](https://pypi.org/project/nltk/) | `>=3.8` (extras `semantic`) | 3.10.x | `nltk.corpus.wordnet` API is stable across 3.x |
+| [OpenHowNet](https://pypi.org/project/OpenHowNet/) | any (extras `semantic`) | 0.0.x (2020 release, data bundled) | last upstream release is old; wrapped defensively (`try_import` + graceful degradation) so it can never break the server |
+
+Everything optional degrades with an actionable install hint — the server starts and stays useful even with only `jieba` installed.
+
 ## Installation
 
 ```bash
@@ -96,9 +123,11 @@ pip install -e ".[all,dev]"
 pytest
 ```
 
-## MCP client configuration
+## Plug it into your agent host (MCP configuration)
 
-Generic `mcp.json` (Works with Claude Desktop, WorkBuddy, Cursor, Cline, ...):
+classic-nlp-mcp is a plain **stdio** MCP server, so any host that speaks MCP works. Development and end-to-end testing were done with **Z.ai GLM-5.3** as the driving agent.
+
+### Claude Desktop / Cursor / Cline / any `mcpServers` client
 
 ```json
 {
@@ -111,7 +140,29 @@ Generic `mcp.json` (Works with Claude Desktop, WorkBuddy, Cursor, Cline, ...):
 }
 ```
 
-Or use the installed console script:
+### Z Code (Z.ai, GLM Coding Plan / GLM-5.3)
+
+[Z Code](https://docs.z.ai/) consumes the same standard `mcpServers` block — add it to Z Code's MCP settings and the GLM-5.3 agent can call `tokenize`, `openie_triples`, `annotate_full` etc. directly from your coding sessions:
+
+```json
+{
+  "mcpServers": {
+    "classic-nlp": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["-m", "classic_nlp_mcp"]
+    }
+  }
+}
+```
+
+Typical Z Code loop: `annotate_full` on a module's docstrings → keep `openie_triples` with `confidence ≥ 0.35` → let GLM-5.3 normalize them against your ontology. Cheap deterministic extraction first, expensive model reasoning only where it pays.
+
+### WorkBuddy
+
+Add the same block to `~/.workbuddy/mcp.json`, then trust the server in the connector management page.
+
+### Or use the installed console script
 
 ```json
 {

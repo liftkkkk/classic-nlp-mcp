@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "classic-nlp-mcp"
+version = "0.1.0"
+description = "Deterministic classical NLP (spaCy, jieba, NLTK, OpenHowNet) exposed as capability-level MCP tools for LLM agents."
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "liftkkkk" }]
+requires-python = ">=3.10"
+keywords = ["mcp", "nlp", "spacy", "jieba", "nltk", "hownet", "openie", "llm", "agent"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Text Processing :: Linguistic",
+]
+dependencies = [
+    # mcp 2.x renamed FastMCP -> MCPServer; 1.x kept the old name.
+    # The compat shim in classic_nlp_mcp/_compat.py supports both lines.
+    "mcp>=1.2.0,<3",
+    "jieba>=0.42.1",
+]
+
+[project.optional-dependencies]
+en = ["spacy>=3.7"]
+semantic = ["nltk>=3.8", "OpenHowNet"]
+all = ["spacy>=3.7", "nltk>=3.8", "OpenHowNet"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+classic-nlp-mcp = "classic_nlp_mcp.server:run"
+
+[project.urls]
+Homepage = "https://github.com/liftkkkk/classic-nlp-mcp"
+Issues = "https://github.com/liftkkkk/classic-nlp-mcp/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/classic_nlp_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

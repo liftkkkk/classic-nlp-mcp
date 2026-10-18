@@ -1,0 +1,167 @@
+# classic-nlp-mcp
+
+**用 MCP 提供确定性传统 NLP 能力 —— 给 LLM Agent 装上便宜、可复现、离线的"语言传感器"。**
+
+[English](README.md) | [中文文档](README.zh-CN.md)
+
+大模型时代，传统 NLP 库没有过时，只是换了岗位：它们不再是"NLP 引擎"，而是引擎底下的**确定性工具层**——批量预处理近乎零成本、字符偏移永远精确、结果可复现、完全离线、零幻觉。本项目把这层能力暴露给所有支持 MCP 的客户端（Claude Desktop、WorkBuddy、Cursor、自研 Agent……），按**能力（capability）**而非"一个库一个壳"来组织。
+
+## 为什么还要传统 NLP
+
+| 需求 | 只用 LLM | classic-nlp-mcp |
+|---|---|---|
+| 给 10 万篇文档做分词/切句（RAG 预处理） | 又贵又慢 | 快、≈0 成本、离线 |
+| 引用需要精确字符偏移 | 经常漂移 | 永远精确 |
+| 知识图谱构建要 (S,P,O) 候选三元组 | 质量好但贵 | OpenIE 打底，LLM 只做校验 |
+| 省 token 的两级漏斗（粗筛 → 精判） | — | 天生为此设计 |
+| 可解释语义（WordNet、知网义原） | 没有原生接口 | 一等公民工具 |
+| 可复现的科研流水线 | 输出会变 | 确定性 |
+
+## 设计原则
+
+1. **包装能力，不包装库**。工具面向任务（`tokenize`、`openie_triples`、`seme_lookup`），库只是适配器背后可替换的引擎。
+2. **单网关 + 可选引擎**。一个 MCP 进程搞定；重引擎（spaCy、NLTK、OpenHowNet）都是可选依赖，`jieba` 是唯一的必装依赖——中文开箱即用。
+3. **统一输出 Schema**。所有工具返回同一信封结构，引擎归属诚实标注，字符偏移精确对齐原文。
+4. **优雅降级，绝不撒谎**。缺可选依赖 → 给出可操作的安装提示（不是崩）；降级引擎明确标注（`regex-fallback`）。
+5. **mcp SDK 1.x / 2.x 双兼容**。`mcp` 2.0 把 `FastMCP` 改名为 `MCPServer` 并删除了旧导入路径；兼容垫片见 [`src/classic_nlp_mcp/_compat.py`](src/classic_nlp_mcp/_compat.py)。
+
+## 架构
+
+```
+ MCP 客户端（Claude / WorkBuddy / Cursor / ...）
+        │
+        ▼
+ classic-nlp-mcp 网关  ── 单进程 · 能力级路由 · 统一输出 Schema
+        │
+ ┌──────┼───────────┬──────────────┐
+ ▼      ▼           ▼              ▼
+spaCy  jieba       NLTK        OpenHowNet
+(可选) (必装)      (可选)        (可选)
+```
+
+## 工具一览
+
+| 工具 | 能力 | 引擎（中 / 英） |
+|---|---|---|
+| `list_capabilities` | 报告已装引擎与各语言能力矩阵 | — |
+| `tokenize` | 分词，精确字符偏移 | jieba / spaCy → 正则兜底 |
+| `pos_tag` | 词性标注 | jieba.posseg / spaCy |
+| `ner` | 命名实体识别（带 span） | jieba 启发式 + spaCy / spaCy |
+| `keyword_extract` | 关键词（带权重） | jieba TF-IDF/TextRank / 词频兜底 |
+| `sent_split` | 句子切分（RAG 分块地基） | jieba+规则 / spaCy → 正则兜底 |
+| `openie_triples` | 开放三元组（S,P,O），带来源 span 与置信度 | jieba 规则（中文，草稿级）/ spaCy 依存规则（英文） |
+| `seme_lookup` | 知网义原查询 | OpenHowNet（中文） |
+| `wordnet_lookup` | 同义词组、定义、上位词 | NLTK WordNet（英文） |
+| `wordnet_similarity` | WordNet 路径相似度 | NLTK WordNet（英文） |
+| `annotate_full` | **一次调用跑全部能力**，按能力隔离报错 | 编排 |
+
+### 统一输出 Schema
+
+所有工具返回同一信封：
+
+```json
+{
+  "tool": "tokenize",
+  "lang": "zh",
+  "engine": "jieba",
+  "engine_version": "0.42.1",
+  "tokens": [{"text": "知识", "start": 2, "end": 4, "pos": "n"}]
+}
+```
+
+`openie_triples` 额外返回 `confidence` 和来源 `span` + `sentence`——三元组是"带出处的候选"，下游接本体对齐或 LLM 校验都方便。
+
+## 安装
+
+```bash
+# 基础安装（中文能力立即可用）
+pip install classic-nlp-mcp
+
+# 可选引擎
+pip install "classic-nlp-mcp[en]"         # spaCy
+pip install "classic-nlp-mcp[semantic]"   # NLTK + OpenHowNet
+pip install "classic-nlp-mcp[all]"
+
+python -m spacy download en_core_web_sm   # spaCy 英文模型
+# 可选：python -m spacy download zh_core_web_sm  （中文统计 NER）
+# 可选：python -c "import nltk; nltk.download('wordnet')"
+```
+
+从源码：
+
+```bash
+git clone https://github.com/liftkkkk/classic-nlp-mcp.git
+cd classic-nlp-mcp
+pip install -e ".[all,dev]"
+pytest
+```
+
+## MCP 客户端配置
+
+通用 `mcp.json`（Claude Desktop / WorkBuddy / Cursor / Cline 均适用）：
+
+```json
+{
+  "mcpServers": {
+    "classic-nlp": {
+      "command": "python",
+      "args": ["-m", "classic_nlp_mcp"]
+    }
+  }
+}
+```
+
+或使用安装后的命令行入口：
+
+```json
+{
+  "mcpServers": {
+    "classic-nlp": { "command": "classic-nlp-mcp" }
+  }
+}
+```
+
+## 典型 Agent 工作流
+
+- **RAG 入库**：`sent_split` 按句子切块 → `keyword_extract` 给每块挂元数据。
+- **知识图谱流水线**：语料跑 `annotate_full` → 留下 `confidence ≥ 0.35` 的 `openie_triples` → LLM 按本体归一化 S/P/O → 入图。
+- **省 token 漏斗**：先 `ner` 粗筛，只把候选实体送 LLM 做类型判定/链接。
+- **可解释相似度**：先试 `seme_lookup`（义原）或 `wordnet_similarity`（路径相似度），再考虑向量相似度。
+
+## 本项目依赖的上游开源项目
+
+- [spaCy](https://github.com/explosion/spaCy) — 工业级多语言 NLP · [文档](https://spacy.io/)
+- [jieba](https://github.com/fxsjy/jieba) — 经典中文分词库
+- [NLTK](https://github.com/nltk/nltk) · [文档](https://www.nltk.org/) — WordNet 与 NLP 时代的标准库
+- [OpenHowNet](https://github.com/thunlp/OpenHowNet) · [知网官网 (keenage.com)](https://www.keenage.com/) — THUNLP 义原词典
+- [stanza](https://github.com/stanfordnlp/stanza) · [文档](https://stanfordnlp.github.io/stanza/) — 斯坦福 NLP 组的 Python 库
+- [Stanford CoreNLP](https://github.com/stanfordnlp/CoreNLP) · [官网](https://stanfordnlp.github.io/CoreNLP/) — 经典 OpenIE 背后的 Java 工具包（JVM；可用同一适配器模式接入）
+- [Model Context Protocol](https://github.com/modelcontextprotocol) · [规范与文档](https://modelcontextprotocol.io/) — 本服务所讲的协议
+
+> 说明：stanza / CoreNLP 适配器尚未内置，在路线图上（见下）。这里列出链接是对本项目设计所依托工具集的致谢。
+
+## 路线图
+
+- [ ] stanza 适配器（神经多语言流水线 + 原生 OpenIE）
+- [ ] CoreNLP JVM 桥接（生产级中英 OpenIE）
+- [ ] 按 `(text, lang, capability, engine_version)` 键的 LRU/磁盘结果缓存
+- [ ] 对齐自定义本体的 RDF / JSON-LD 导出
+- [ ] `compare_engines` 工具（同一能力多引擎对齐输出）
+
+## 请作者喝杯咖啡
+
+classic-nlp-mcp 是我在业余时间开发和维护的开源项目，永久免费。
+
+如果它给你的 Agent 提供了确定性语言传感器、便宜的知识图谱预处理，或者帮你省掉了拼接五个 NLP 库的麻烦——请我喝杯咖啡吧（9.9 元就够）。每一份支持都会直接变成新功能和 bug 修复。
+
+<p align="center">
+  <img src="donate.jpg" alt="请作者喝杯咖啡" width="280">
+</p>
+
+<p align="center"><i>打赏时留言告诉我你最想要的功能，我会优先做 ;)</i></p>
+
+**不想打赏？** 点个 Star、提个 Issue、转发给需要的人，同样是对项目的巨大支持！
+
+## 许可证
+
+[MIT](LICENSE) © 2026 liftkkkk

@@ -156,10 +156,15 @@ def keyword_extract(text: str, top_k: int = 10, method: str = "tfidf") -> dict[s
 
 
 @mcp.tool()
-def sent_split(text: str, lang: str = "auto") -> dict[str, Any]:
+def sent_split(text: str, lang: str = "auto", engine: str = "auto") -> dict[str, Any]:
     """Sentence segmentation with offsets - the foundation for RAG chunking.
-    Chinese: jieba + rule regex; English: spaCy sents when available."""
+    Chinese: jieba + rule regex; English: spaCy sents by default, or the
+    zero-dependency regex fallback with ``engine="regex"`` - use the fast
+    path for bulk preprocessing where neural segmentation is not worth the
+    CPU time."""
     lang = _resolve_lang(text, lang)
+    if engine == "regex":
+        return fallback.fallback_sent_split(text, lang)
     if lang == "zh":
         return REGISTRY.get("jieba", "zh").sent_split(text)
     adapter = REGISTRY.get("spacy", "en")

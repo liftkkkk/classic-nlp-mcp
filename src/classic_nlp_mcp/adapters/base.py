@@ -47,6 +47,11 @@ INSTALL_HINTS: dict[str, str] = {
         "OpenHowNet is not installed. Install with: "
         "`pip install 'classic-nlp-mcp[semantic]'` (the sememe dictionary ships with the package)."
     ),
+    "stanza": (
+        "Stanza (Stanford NLP) is not installed or its models for this language are missing. Install with: "
+        "`pip install 'classic-nlp-mcp[stanford]'` then download models, e.g. "
+        "`python -c \"import stanza; stanza.download('en', processors='tokenize,pos,lemma,ner,depparse,openie,constituency')\"`."
+    ),
 }
 
 
@@ -131,6 +136,8 @@ class AdapterRegistry:
         ("jieba", "classic_nlp_mcp.adapters.jieba_adapter"),
         ("nltk", "classic_nlp_mcp.adapters.nltk_adapter"),
         ("openhownet", "classic_nlp_mcp.adapters.openhownet_adapter"),
+        ("stanza", "classic_nlp_mcp.adapters.stanza_adapter"),
+        ("corenlp", "classic_nlp_mcp.adapters.corenlp_adapter"),
     )
 
     def __init__(self) -> None:

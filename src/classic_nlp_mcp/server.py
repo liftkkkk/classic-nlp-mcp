@@ -34,7 +34,16 @@ _ENGLISH_TAG_RE = re.compile(r"^[a-zA-Z]")
 
 
 def _resolve_lang(text: str, lang: str) -> str:
-    return detect_lang(text) if lang in ("auto", "", None) else lang
+    """'auto'/empty -> detect zh/en; any other value is kept verbatim so that
+    callers can pass a stanza language code (fr, de, ja, ...)."""
+    if lang in ("auto", "", None):
+        return detect_lang(text)
+    return lang
+
+
+def _stanza_for(lang: str):
+    """Stanza adapter for *lang* or None (not installed / models missing)."""
+    return REGISTRY.get("stanza", lang)
 
 
 def _engine_name(lang: str, engine: str | None, default: str) -> str:
@@ -53,9 +62,12 @@ def list_capabilities() -> dict[str, Any]:
     spacy_ok = REGISTRY.engine_available("spacy")
     nltk_ok = REGISTRY.engine_available("nltk")
     hownet_ok = REGISTRY.engine_available("openhownet")
-
-    zh_stats_ner = bool(spacy_ok and REGISTRY.get("spacy", "zh"))
-    en_pipeline = bool(spacy_ok and REGISTRY.get("spacy", "en"))
+    stanza_ok = REGISTRY.engine_available("stanza")
+    corenlp_ok = REGISTRY.engine_available("corenlp")
+    en_stanza = bool(stanza_ok and REGISTRY.get("stanza", "en"))
+    zh_stanza = bool(stanza_ok and REGISTRY.get("stanza", "zh"))
+    en_spacy = bool(spacy_ok and REGISTRY.get("spacy", "en"))
+    zh_spacy = bool(spacy_ok and REGISTRY.get("spacy", "zh"))
 
     caps = {
         "mcp_sdk_major": MCP_SDK_MAJOR,
@@ -63,20 +75,46 @@ def list_capabilities() -> dict[str, Any]:
             "jieba": {"installed": True, "optional": False},
             "spacy": {"installed": spacy_ok, "optional": True,
                       "hint": INSTALL_HINTS["spacy"]},
+            "stanza": {"installed": stanza_ok, "optional": True,
+                       "note": "Stanford NLP neural pipeline: statistical NER, "
+                               "constituency parsing, 60+ languages (no OpenIE - "
+                               "OpenIE lives in CoreNLP)",
+                       "hint": INSTALL_HINTS["stanza"]},
+            "corenlp": {"installed": corenlp_ok, "optional": True,
+                        "note": "canonical Stanford OpenIE via a local CoreNLP HTTP server",
+                        "hint": INSTALL_HINTS.get(
+                            "corenlp",
+                            "Start StanfordCoreNLPServer on :9000 or set CORENLP_URL; "
+                            "see https://stanfordnlp.github.io/CoreNLP/download.html")},
             "nltk": {"installed": nltk_ok, "optional": True,
                      "hint": INSTALL_HINTS["nltk"]},
             "openhownet": {"installed": hownet_ok, "optional": True,
                            "hint": INSTALL_HINTS["OpenHowNet"]},
         },
         "capabilities": {
-            "tokenize": {"zh": "jieba (regex fallback)", "en": "spacy or regex fallback"},
-            "pos_tag": {"zh": "jieba.posseg", "en": "spacy" if en_pipeline else "unavailable"},
-            "ner": {"zh": "jieba heuristic" + (" / spacy" if zh_stats_ner else ""),
-                    "en": "spacy" if en_pipeline else "unavailable"},
+            "tokenize": {"zh": "jieba (regex fallback)", "en": "spacy / stanza / regex fallback",
+                         "multilingual": "stanza (any downloaded lang code)"},
+            "pos_tag": {"zh": "jieba.posseg / stanza",
+                        "en": "spacy / stanza",
+                        "multilingual": "stanza"},
+            "ner": {"zh": "stanza statistical" if zh_stanza else "jieba heuristic"
+                            + (" / spacy" if zh_spacy else ""),
+                    "en": "spacy / stanza",
+                    "multilingual": "stanza"},
             "keyword_extract": {"zh": "jieba TF-IDF/TextRank", "en": "frequency fallback"},
-            "sent_split": {"zh": "jieba+regex", "en": "regex fallback"},
-            "openie_triples": {"zh": "jieba rule-based (draft quality)",
-                               "en": "spacy dependency rules" if en_pipeline else "unavailable"},
+            "sent_split": {"zh": "jieba+regex", "en": "spacy / stanza / regex fallback"},
+            "openie_triples": {
+                "zh": "jieba rule-based (draft quality)",
+                "en": "stanford-corenlp server (canonical)" if corenlp_ok
+                      else ("spacy dependency rules" if en_spacy else "unavailable"),
+                "note": "English prefers the canonical CoreNLP OpenIE when a local "
+                        "CoreNLP server is running; engine='corenlp' forces it",
+            },
+            "constituency_parse": {
+                "zh": "stanza" if zh_stanza else "unavailable",
+                "en": "stanza" if en_stanza else "unavailable",
+                "note": "phrase-structure trees - exclusive to the Stanford stack here",
+            },
             "wordnet_lookup": {"en": "nltk" if (nltk_ok and REGISTRY.get("nltk", "en")) else "unavailable"},
             "wordnet_similarity": {"en": "nltk" if (nltk_ok and REGISTRY.get("nltk", "en")) else "unavailable"},
             "seme_lookup": {"zh": "OpenHowNet" if (hownet_ok and REGISTRY.get("openhownet", "zh")) else "unavailable"},
@@ -105,31 +143,43 @@ def tokenize(text: str, lang: str = "auto") -> dict[str, Any]:
     adapter = REGISTRY.get("spacy", "en")
     if adapter and adapter.available:
         return adapter.tokenize(text)
+    st = _stanza_for(lang)
+    if st:
+        return st.tokenize(text)
+    if lang != "en":
+        raise MissingDependency("stanza")
     return fallback.fallback_tokenize(text, "en")
 
 
 @mcp.tool()
 def pos_tag(text: str, lang: str = "auto") -> dict[str, Any]:
-    """Part-of-speech tagging.  Chinese: jieba.posseg; English: spaCy
-    (raises an actionable install hint when spaCy is missing)."""
+    """Part-of-speech tagging (+ lemma with stanza).  Chinese: jieba.posseg;
+    English: spaCy then stanza; other languages: stanza.  Raises an
+    actionable install hint when no engine is available."""
     lang = _resolve_lang(text, lang)
     if lang == "zh":
         return REGISTRY.get("jieba", "zh").pos_tag(text)
     adapter = REGISTRY.get("spacy", "en")
     if adapter and adapter.available:
         return adapter.pos_tag(text)
-    raise MissingDependency("spacy")
+    st = _stanza_for(lang)
+    if st:
+        return st.pos_tag(text)
+    raise MissingDependency("stanza" if lang != "en" else "spacy")
 
 
 @mcp.tool()
 def ner(text: str, lang: str = "auto") -> dict[str, Any]:
     """Named entity recognition with exact spans.
 
-    Chinese: jieba POS-tag heuristic (nr/ns/nt -> PER/LOC/ORG); English:
-    spaCy statistical NER.  Install the spaCy zh model for statistical
-    Chinese NER."""
+    Chinese: stanza statistical NER when installed (recommended), otherwise
+    the jieba POS-tag heuristic (nr/ns/nt -> PER/LOC/ORG).  English: spaCy,
+    then stanza.  Other languages: stanza."""
     lang = _resolve_lang(text, lang)
     if lang == "zh":
+        zh_st = _stanza_for("zh")
+        if zh_st:
+            return zh_st.ner(text)
         zh_spacy = REGISTRY.get("spacy", "zh")
         if zh_spacy and zh_spacy.available:
             return zh_spacy.ner(text)
@@ -137,7 +187,10 @@ def ner(text: str, lang: str = "auto") -> dict[str, Any]:
     adapter = REGISTRY.get("spacy", "en")
     if adapter and adapter.available:
         return adapter.ner(text)
-    raise MissingDependency("spacy")
+    st = _stanza_for(lang)
+    if st:
+        return st.ner(text)
+    raise MissingDependency("stanza" if lang != "en" else "spacy")
 
 
 # ---------------------------------------------------------------------------
@@ -182,21 +235,51 @@ def sent_split(text: str, lang: str = "auto", engine: str = "auto") -> dict[str,
 
 
 @mcp.tool()
-def openie_triples(text: str, lang: str = "auto") -> dict[str, Any]:
+def openie_triples(text: str, lang: str = "auto", engine: str = "auto") -> dict[str, Any]:
     """Open Information Extraction: (subject, predicate, object) triples.
 
-    English: dependency-parse rules over spaCy (confidence 0.6).
+    Engine priority for English (``engine`` may force one):
+    1. ``corenlp``  - the canonical Stanford CoreNLP OpenIE via a local
+       CoreNLP server (env CORENLP_URL, default localhost:9000) when it is up;
+    2. ``spacy``    - dependency-parse rules (confidence 0.6).
+
     Chinese: naive (noun, verb, noun) pattern mining over jieba POS
-    (confidence 0.35 - draft quality by design, meant as candidate triples
-    for knowledge-graph construction, to be verified by an LLM or ontology
-    downstream).  Every triple carries the source character span."""
+    (confidence 0.35 - draft quality by design).  CoreNLP's OpenIE is
+    English-focused.  Every triple carries the source character span and
+    is a *candidate* for downstream KG normalization - not a fact."""
     lang = _resolve_lang(text, lang)
+    if lang != "zh" and engine in ("auto", "corenlp"):
+        corenlp = REGISTRY.get("corenlp", "en")
+        if corenlp:
+            return corenlp.openie_triples(text)
+        if engine == "corenlp":
+            from .adapters import corenlp_adapter
+
+            raise RuntimeError(corenlp_adapter.setup_hint())
     if lang == "zh":
         return REGISTRY.get("jieba", "zh").openie_triples(text)
     adapter = REGISTRY.get("spacy", "en")
     if adapter and adapter.available:
         return adapter.openie_triples(text)
     raise MissingDependency("spacy")
+
+
+# ---------------------------------------------------------------------------
+# constituency parsing (Stanford stack exclusive)
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def constituency_parse(text: str, lang: str = "auto", max_trees: int = 5) -> dict[str, Any]:
+    """Phrase-structure (constituency) parses via stanza - exclusive to the
+    Stanford stack among the wrapped engines.  Returns bracketed trees plus
+    the set of node labels per sentence.  Requires the language's stanza
+    models with the 'constituency' processor."""
+    lang = _resolve_lang(text, lang)
+    st = _stanza_for(lang)
+    if st:
+        return st.constituency_parse(text, max_trees=max_trees)
+    raise MissingDependency("stanza")
 
 
 # ---------------------------------------------------------------------------

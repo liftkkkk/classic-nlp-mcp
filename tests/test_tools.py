@@ -148,6 +148,69 @@ def test_annotate_full_merges_and_reports_errors():
 
 
 # ---------------------------------------------------------------------------
+# stanza (Stanford neural pipeline; skips when models are not downloaded)
+# ---------------------------------------------------------------------------
+
+
+def _stanza_en_ready():
+    try:
+        from classic_nlp_mcp.server import REGISTRY
+
+        return bool(REGISTRY.get("stanza", "en"))
+    except Exception:
+        return False
+
+
+def test_stanza_ner_and_pos():
+    if not _stanza_en_ready():
+        pytest.skip("stanza en models not downloaded")
+    from classic_nlp_mcp.server import ner, pos_tag
+
+    r = ner("Microsoft hired John Chen in Seattle.", "en")
+    labels = {e["label"] for e in r["entities"]}
+    assert labels & {"ORG", "PERSON", "GPE", "LOC"}
+    p = pos_tag("Apple hired John.", "en")
+    assert any(t.get("pos") for t in p["tokens"])
+
+
+def test_stanza_constituency():
+    if not _stanza_en_ready():
+        pytest.skip("stanza en models not downloaded")
+    from classic_nlp_mcp.server import constituency_parse
+
+    r = constituency_parse("Apple hired John.", "en")
+    assert r["trees"][0]["tree"].startswith("(ROOT")
+
+
+def test_stanza_openie_honest_unsupported():
+    from classic_nlp_mcp.server import REGISTRY
+
+    st = REGISTRY.get("stanza", "en")
+    if not st:
+        pytest.skip("stanza en models not downloaded")
+    r = st.openie_triples("Apple hired John.")
+    assert r["supported"] is False
+
+
+# ---------------------------------------------------------------------------
+# CoreNLP server bridge (skips when no server is running)
+# ---------------------------------------------------------------------------
+
+
+def test_corenlp_openie_when_server_up():
+    from classic_nlp_mcp.adapters import corenlp_adapter
+
+    if not corenlp_adapter.package_available():
+        pytest.skip("no CoreNLP server on CORENLP_URL")
+    from classic_nlp_mcp.server import openie_triples
+
+    r = openie_triples("Barack Obama was born in Hawaii.", "en", engine="corenlp")
+    assert r["engine"].startswith("stanford-corenlp")
+    assert r["triples"]
+    assert any("born" in t["predicate"] for t in r["triples"])
+
+
+# ---------------------------------------------------------------------------
 # MCP protocol end-to-end (in-memory client), mirroring how WorkBuddy loads it
 # ---------------------------------------------------------------------------
 
@@ -180,7 +243,7 @@ async def _handshake():
             expected = {
                 "list_capabilities", "tokenize", "pos_tag", "ner", "keyword_extract",
                 "sent_split", "openie_triples", "seme_lookup", "wordnet_lookup",
-                "wordnet_similarity", "annotate_full",
+                "wordnet_similarity", "annotate_full", "constituency_parse",
             }
             assert expected <= names
             res = await session.call_tool(

@@ -56,16 +56,19 @@ spaCy  jieba       NLTK        OpenHowNet
 | Tool | Capability | Engine (zh / en) |
 |---|---|---|
 | `list_capabilities` | What is installed, per language | — |
-| `tokenize` | Segmentation with exact offsets | jieba / spaCy → regex fallback |
-| `pos_tag` | Part-of-speech tagging | jieba.posseg / spaCy |
-| `ner` | Named entities with spans | jieba heuristic + spaCy / spaCy |
+| `tokenize` | Segmentation with exact offsets | jieba / spaCy → stanza → regex fallback |
+| `pos_tag` | Part-of-speech tagging (+lemma) | jieba.posseg / spaCy → stanza |
+| `ner` | Named entities with spans | stanza statistical + jieba heuristic + spaCy / spaCy → stanza |
 | `keyword_extract` | TF-IDF / TextRank with weights | jieba.analyse / frequency fallback |
-| `sent_split` | Sentence segmentation (RAG chunking base) | jieba+regex / spaCy → regex fallback |
-| `openie_triples` | OpenIE (S, P, O) triples with source span & confidence | jieba rule (zh, draft quality) / spaCy dep rules (en) |
+| `sent_split` | Sentence segmentation (RAG chunking base) | jieba+regex / spaCy → stanza → regex fallback |
+| `openie_triples` | OpenIE (S, P, O) triples with source span & confidence | jieba rule (zh, draft quality) / **Stanford CoreNLP** (canonical) → spaCy dep rules |
+| `constituency_parse` | Phrase-structure trees + node labels | stanza (Stanford stack exclusive) |
 | `seme_lookup` | HowNet sememes (义原) lookup | OpenHowNet (zh) |
 | `wordnet_lookup` | Synsets, definitions, hypernyms | NLTK WordNet (en) |
 | `wordnet_similarity` | WordNet path similarity | NLTK WordNet (en) |
 | `annotate_full` | All of the above in **one call**, per-capability error isolation | orchestration |
+
+**Multilingual**: stanza powers `tokenize` / `pos_tag` / `ner` / `sent_split` / `constituency_parse` for **any stanza language code** (`fr`, `de`, `ja`, `es`, ...) - just pass it as `lang` once that language's models are downloaded.
 
 ### Unified output schema
 
@@ -93,6 +96,8 @@ Written against the **current** APIs of every wrapped toolkit; the pinned ranges
 | [mcp](https://pypi.org/project/mcp/) SDK | `>=1.2, <3` | 2.0.x | **2.0 renamed `FastMCP` → `MCPServer`** and removed the old import path; the compat shim (`src/classic_nlp_mcp/_compat.py`) supports both majors |
 | [jieba](https://pypi.org/project/jieba/) | `>=0.42.1` | 0.42.1 (stable, pure Python) | base dependency — Chinese works out of the box |
 | [spaCy](https://pypi.org/project/spacy/) | `>=3.7` (extras `en`) | 3.8.x (2026-08) | current `spacy.load` / `Doc` / `Span` API; `en_core_web_sm`, `zh_core_web_sm` both supported |
+| [stanza](https://pypi.org/project/stanza/) | `>=1.8` (extras `stanford`) | 1.15.x | written against 1.15 (models under the platform cache dir); any language code works once its models are downloaded. **No released stanza version ships OpenIE** - use the CoreNLP bridge for that |
+| Stanford [CoreNLP](https://stanfordnlp.github.io/CoreNLP/) | any 4.x server | 4.5.10 | optional: canonical OpenIE via local `StanfordCoreNLPServer` (Java, `CORENLP_URL`, default `localhost:9000`); degrades gracefully when the server is down |
 | [NLTK](https://pypi.org/project/nltk/) | `>=3.8` (extras `semantic`) | 3.10.x | `nltk.corpus.wordnet` API is stable across 3.x |
 | [OpenHowNet](https://pypi.org/project/OpenHowNet/) | any (extras `semantic`) | 0.0.x (2020 release, data bundled) | last upstream release is old; wrapped defensively (`try_import` + graceful degradation) so it can never break the server |
 
@@ -179,6 +184,21 @@ Add the same block to `~/.workbuddy/mcp.json`, then trust the server in the conn
 - **Token-saving funnel**: `ner` first; only send candidate entities to the LLM for typing/linking.
 - **Interpretable similarity**: `seme_lookup` (sememes) or `wordnet_similarity` (path similarity) before embedding-based similarity.
 
+## v0.2 - the Stanford stack is in
+
+Two additions, because the Stanford toolchain is still **irreplaceable** in specific niches:
+
+- **[stanza](https://github.com/stanfordnlp/stanza)** adapter (optional `[stanford]` extra): neural statistical NER, POS + lemma, sentence splitting for **60+ languages** (pass any stanza language code as `lang`), and `constituency_parse` - phrase-structure trees that no other wrapped engine provides. Note: no released stanza version ships OpenIE - it lives in CoreNLP, which is why the next line exists.
+- **Stanford CoreNLP OpenIE bridge**: the *canonical* OpenIE implementation. Run a local `StanfordCoreNLPServer` (Java) and this MCP uses it automatically for English triples - highest-quality candidate triples in the project, still with provenance spans. When the server is down, English falls back to spaCy dependency rules and `list_capabilities` reports the true status.
+
+```bash
+pip install "classic-nlp-mcp[stanford]"
+python -c "import stanza; stanza.download('en')"
+# optional, for canonical OpenIE (Java required):
+#   download CoreNLP from https://stanfordnlp.github.io/CoreNLP/download.html and start:
+#   java -mx4g -cp "*" edu.stanford.nlp.pipeline.StanfordCoreNLPServer -port 9000 -timeout 15000
+```
+
 ## Upstream projects this stands on
 
 - [spaCy](https://github.com/explosion/spaCy) — industrial-strength multilingual NLP · [docs](https://spacy.io/)
@@ -189,12 +209,12 @@ Add the same block to `~/.workbuddy/mcp.json`, then trust the server in the conn
 - [Stanford CoreNLP](https://github.com/stanfordnlp/CoreNLP) · [site](https://stanfordnlp.github.io/CoreNLP/) — the Java toolkit behind classic OpenIE (JVM; can be wrapped with the same adapter pattern)
 - [Model Context Protocol](https://github.com/modelcontextprotocol) · [spec & docs](https://modelcontextprotocol.io/) — the protocol this server speaks
 
-> Note: stanza / CoreNLP are not bundled as adapters yet — they are on the roadmap (see below). The links are acknowledgements of the toolkits this project's design builds upon.
+> Note: stanza ships as the `[stanford]` extra (models downloaded separately per language); CoreNLP integrates through its HTTP server - see the v0.2 section above.
 
 ## Roadmap
 
-- [ ] stanza adapter (neural multilingual pipeline + native OpenIE)
-- [ ] CoreNLP JVM bridge for production-grade English/Chinese OpenIE
+- [ ] CoreNLP adapter hardening: auto-start the server, Chinese OpenIE rules
+- [ ] stanza zh model CI smoke test
 - [ ] LRU/disk result cache keyed by `(text, lang, capability, engine_version)`
 - [ ] RDF / JSON-LD export aligned with custom ontologies
 - [ ] `compare_engines` tool (same capability, multiple engines, aligned output)

@@ -35,9 +35,9 @@ def detect_lang(text: str) -> str:
 # Extra hints per optional package.  Everything except jieba is optional.
 INSTALL_HINTS: dict[str, str] = {
     "spacy": (
-        "spaCy is not installed. Install with: "
-        "`pip install 'classic-nlp-mcp[en]'` then `python -m spacy download en_core_web_sm` "
-        "(and `zh_core_web_sm` for Chinese spaCy support)."
+        "spaCy is not installed. Chinese-first: `pip install 'classic-nlp-mcp[zh]'` "
+        "then `python -m spacy download zh_core_web_sm` for statistical Chinese NER; "
+        "English: `pip install 'classic-nlp-mcp[en]'` then `python -m spacy download en_core_web_sm`."
     ),
     "nltk": (
         "NLTK is not installed. Install with: "

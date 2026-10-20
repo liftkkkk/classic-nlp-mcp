@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "classic-nlp-mcp"
-version = "0.2.0"
-description = "Deterministic classical NLP (spaCy, jieba, NLTK, OpenHowNet) exposed as capability-level MCP tools for LLM agents."
+version = "0.2.1"
+description = "Deterministic bilingual (Chinese-first) classical NLP (spaCy, jieba, NLTK, OpenHowNet) exposed as capability-level MCP tools for LLM agents."
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "liftkkkk" }]
@@ -25,7 +25,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-en = ["spacy>=3.7"]
+zh = ["spacy>=3.7"]        # statistical Chinese: zh_core_web_sm (NER etc.)
+en = ["spacy>=3.7"]        # English pipeline: en_core_web_sm
 stanford = ["stanza>=1.8"]
 semantic = ["nltk>=3.8", "OpenHowNet"]
 all = ["spacy>=3.7", "stanza>=1.8", "nltk>=3.8", "OpenHowNet"]

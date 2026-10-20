@@ -1,6 +1,8 @@
 # classic-nlp-mcp
 
-**Deterministic classical NLP, served over MCP — give your LLM agent cheap, reproducible, offline language sensors.**
+**Deterministic, Chinese-first classical NLP, served over MCP — give your LLM agent cheap, reproducible, offline language sensors.**
+
+> **中英双语，中文优先。** Bilingual by design: zh and en are treated as equally first-class languages, and most tooling paths for Chinese (jieba full pipeline, HowNet sememes 义原, Chinese OpenIE) are the deepest in the project.
 
 [English](README.md) | [中文文档](README.zh-CN.md)
 
@@ -32,7 +34,7 @@ In the LLM era, classical NLP libraries did not become useless — they changed 
 ## Design principles
 
 1. **Wrap capabilities, not libraries.** Tools are task-oriented (`tokenize`, `openie_triples`, `seme_lookup`); libraries are swappable backends behind adapters.
-2. **One gateway, optional engines.** A single MCP server process; heavy engines (spaCy, NLTK, OpenHowNet) are optional extras. `jieba` is the only mandatory dependency, so Chinese works out of the box.
+2. **One gateway, optional engines.** A single MCP server process; heavy engines (spaCy, NLTK, OpenHowNet) are optional extras. `jieba` is the only mandatory dependency, so **Chinese works out of the box** — tokenize, POS, keywords, sentence splitting, rule-based Chinese OpenIE and HowNet sememes all run with zero extra installs. The `[zh]` extra upgrades Chinese further (statistical NER).
 3. **Unified output schema.** Every tool returns the same envelope with honest engine attribution and exact character offsets.
 4. **Graceful degradation, never silent lies.** Missing optional dependency → an actionable install hint (not a crash); fallback engines are labeled as such (`regex-fallback`).
 5. **mcp SDK 1.x and 2.x compatible.** The `mcp` 2.0 release renamed `FastMCP` → `MCPServer` and removed the old import path; a compat shim ([`src/classic_nlp_mcp/_compat.py`](src/classic_nlp_mcp/_compat.py)) supports both lines.
@@ -95,7 +97,7 @@ Written against the **current** APIs of every wrapped toolkit; the pinned ranges
 | Python | >= 3.10 | 3.13 / 3.14 | spaCy wheels cover 3.9–3.14 |
 | [mcp](https://pypi.org/project/mcp/) SDK | `>=1.2, <3` | 2.0.x | **2.0 renamed `FastMCP` → `MCPServer`** and removed the old import path; the compat shim (`src/classic_nlp_mcp/_compat.py`) supports both majors |
 | [jieba](https://pypi.org/project/jieba/) | `>=0.42.1` | 0.42.1 (stable, pure Python) | base dependency — Chinese works out of the box |
-| [spaCy](https://pypi.org/project/spacy/) | `>=3.7` (extras `en`) | 3.8.x (2026-08) | current `spacy.load` / `Doc` / `Span` API; `en_core_web_sm`, `zh_core_web_sm` both supported |
+| [spaCy](https://pypi.org/project/spacy/) | `>=3.7` (extras `en` / `zh`) | 3.8.x (2026-08) | current `spacy.load` / `Doc` / `Span` API; `en_core_web_sm`, `zh_core_web_sm` both supported |
 | [stanza](https://pypi.org/project/stanza/) | `>=1.8` (extras `stanford`) | 1.15.x | written against 1.15 (models under the platform cache dir); any language code works once its models are downloaded. **No released stanza version ships OpenIE** - use the CoreNLP bridge for that |
 | Stanford [CoreNLP](https://stanfordnlp.github.io/CoreNLP/) | any 4.x server | 4.5.10 | optional: canonical OpenIE via local `StanfordCoreNLPServer` (Java, `CORENLP_URL`, default `localhost:9000`); degrades gracefully when the server is down |
 | [NLTK](https://pypi.org/project/nltk/) | `>=3.8` (extras `semantic`) | 3.10.x | `nltk.corpus.wordnet` API is stable across 3.x |
@@ -105,19 +107,37 @@ Everything optional degrades with an actionable install hint — the server star
 
 ## Installation
 
+**Chinese-first**: the base install already covers the full Chinese pipeline; the `[zh]` extra is the *recommended* upgrade path for statistical Chinese NER.
+
 ```bash
-# base (Chinese works immediately)
+# base — Chinese works immediately (jieba: tokenize/POS/keywords/sent_split/
+#        rule-based Chinese OpenIE, OpenHowNet sememes with [semantic])
 pip install classic-nlp-mcp
 
-# optional engines
-pip install "classic-nlp-mcp[en]"         # spaCy
-pip install "classic-nlp-mcp[semantic]"   # NLTK + OpenHowNet
+# zh — recommended: statistical Chinese NER via spaCy
+pip install "classic-nlp-mcp[zh]"
+python -m spacy download zh_core_web_sm   # statistical Chinese model
+
+# en — English pipeline (same spaCy dependency, English model)
+pip install "classic-nlp-mcp[en]"
+python -m spacy download en_core_web_sm   # spaCy English model
+
+# other engines
+pip install "classic-nlp-mcp[semantic]"   # NLTK + OpenHowNet (HowNet sememes 义原)
+pip install "classic-nlp-mcp[stanford]"   # stanza (60+ languages, constituency)
 pip install "classic-nlp-mcp[all]"
 
-python -m spacy download en_core_web_sm   # spaCy English model
-# optional: python -m spacy download zh_core_web_sm  (statistical Chinese NER)
 # optional: python -c "import nltk; nltk.download('wordnet')"
 ```
+
+What the `[zh]` path unlocks, by language coverage:
+
+| Chinese capability | base install (jieba) | with `[zh]` + `zh_core_web_sm` |
+|---|---|---|
+| tokenize / pos_tag / keyword / sent_split | ✅ full pipeline | spaCy used where it wins |
+| `ner` | jieba POS heuristic | **spaCy statistical NER** (auto-preferred) |
+| `openie_triples` | jieba rules (0.35, draft) | jieba rules / CoreNLP bridge unchanged |
+| `seme_lookup` (HowNet 义原) | ✅ (with `[semantic]`) | — |
 
 Or from source:
 

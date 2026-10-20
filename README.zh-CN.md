@@ -2,6 +2,8 @@
 
 **用 MCP 提供确定性传统 NLP 能力 —— 给 LLM Agent 装上便宜、可复现、离线的"语言传感器"。**
 
+> **中英双语，中文优先。** 本项目把中文和英文当作同等的一等语言，且中文的工具路径（jieba 全链路、知网义原、中文 OpenIE）是整个项目打磨最深的部分——中文处理场景往往是重头。
+
 [English](README.md) | [中文文档](README.zh-CN.md)
 
 **以智谱 Z.ai GLM-5.3 作为驱动 Agent 完成开发与端到端实测。** 兼容所有 MCP 宿主：Claude Desktop、Z Code（GLM Coding Plan）、WorkBuddy、Cursor、Cline、自研 Agent。
@@ -32,7 +34,7 @@
 ## 设计原则
 
 1. **包装能力，不包装库**。工具面向任务（`tokenize`、`openie_triples`、`seme_lookup`），库只是适配器背后可替换的引擎。
-2. **单网关 + 可选引擎**。一个 MCP 进程搞定；重引擎（spaCy、NLTK、OpenHowNet）都是可选依赖，`jieba` 是唯一的必装依赖——中文开箱即用。
+2. **单网关 + 可选引擎**。一个 MCP 进程搞定；重引擎（spaCy、NLTK、OpenHowNet）都是可选依赖，`jieba` 是唯一的必装依赖——**中文开箱即用**：分词、词性、关键词、切句、规则版中文 OpenIE、（装了 `[semantic]` 后的）知网义原，零额外安装全都能跑。`[zh]` extra 是中文的推荐升级路径（统计 NER）。
 3. **统一输出 Schema**。所有工具返回同一信封结构，引擎归属诚实标注，字符偏移精确对齐原文。
 4. **优雅降级，绝不撒谎**。缺可选依赖 → 给出可操作的安装提示（不是崩）；降级引擎明确标注（`regex-fallback`）。
 5. **mcp SDK 1.x / 2.x 双兼容**。`mcp` 2.0 把 `FastMCP` 改名为 `MCPServer` 并删除了旧导入路径；兼容垫片见 [`src/classic_nlp_mcp/_compat.py`](src/classic_nlp_mcp/_compat.py)。
@@ -95,7 +97,7 @@ spaCy  jieba       NLTK        OpenHowNet
 | Python | >= 3.10 | 3.13 / 3.14 | spaCy wheel 覆盖 3.9–3.14 |
 | [mcp](https://pypi.org/project/mcp/) SDK | `>=1.2, <3` | 2.0.x | **2.0 把 `FastMCP` 改名为 `MCPServer`** 并删除旧导入路径；兼容垫片（`src/classic_nlp_mcp/_compat.py`）双版本通吃 |
 | [jieba](https://pypi.org/project/jieba/) | `>=0.42.1` | 0.42.1（多年稳定，纯 Python） | 唯一必装依赖——中文开箱即用 |
-| [spaCy](https://pypi.org/project/spacy/) | `>=3.7`（extras `en`） | 3.8.x（2026-08） | 当前 `spacy.load` / `Doc` / `Span` API；`en_core_web_sm`、`zh_core_web_sm` 均支持 |
+| [spaCy](https://pypi.org/project/spacy/) | `>=3.7`（extras `en` / `zh`） | 3.8.x（2026-08） | 当前 `spacy.load` / `Doc` / `Span` API；`en_core_web_sm`、`zh_core_web_sm` 均支持 |
 | [stanza](https://pypi.org/project/stanza/) | `>=1.8`（extras `stanford`） | 1.15.x | 按 1.15 编写（模型在平台缓存目录）；下载某语言模型后即可用该语言代码。**任何已发布版本都不带 OpenIE**——正统 OpenIE 走 CoreNLP 桥 |
 | Stanford [CoreNLP](https://stanfordnlp.github.io/CoreNLP/) | 任意 4.x 服务端 | 4.5.10 | 可选：通过本地 `StanfordCoreNLPServer`（Java，`CORENLP_URL`，默认 `localhost:9000`）提供正统 OpenIE；服务未起时优雅降级 |
 | [NLTK](https://pypi.org/project/nltk/) | `>=3.8`（extras `semantic`） | 3.10.x | `nltk.corpus.wordnet` API 在 3.x 全线稳定 |
@@ -105,19 +107,37 @@ spaCy  jieba       NLTK        OpenHowNet
 
 ## 安装
 
+**中文优先**：基础安装已覆盖完整中文链路；`[zh]` extra 是中文的**推荐**升级路径（统计 NER）。
+
 ```bash
-# 基础安装（中文能力立即可用）
+# 基础安装——中文立即可用（jieba：分词/词性/关键词/切句/规则版中文 OpenIE；
+#          装上 [semantic] 后还有知网义原）
 pip install classic-nlp-mcp
 
-# 可选引擎
-pip install "classic-nlp-mcp[en]"         # spaCy
-pip install "classic-nlp-mcp[semantic]"   # NLTK + OpenHowNet
+# zh —— 推荐：spaCy 统计中文 NER
+pip install "classic-nlp-mcp[zh]"
+python -m spacy download zh_core_web_sm   # 中文统计模型
+
+# en —— 英文流水线（同一个 spaCy 依赖，英文模型）
+pip install "classic-nlp-mcp[en]"
+python -m spacy download en_core_web_sm   # spaCy 英文模型
+
+# 其他引擎
+pip install "classic-nlp-mcp[semantic]"   # NLTK + OpenHowNet（知网义原）
+pip install "classic-nlp-mcp[stanford]"   # stanza（60+ 语言、成分句法）
 pip install "classic-nlp-mcp[all]"
 
-python -m spacy download en_core_web_sm   # spaCy 英文模型
-# 可选：python -m spacy download zh_core_web_sm  （中文统计 NER）
 # 可选：python -c "import nltk; nltk.download('wordnet')"
 ```
+
+`[zh]` 升级路径带来的中文能力变化：
+
+| 中文能力 | 基础安装（jieba） | 加 `[zh]` + `zh_core_web_sm` |
+|---|---|---|
+| 分词 / 词性 / 关键词 / 切句 | ✅ 全链路 | spaCy 在占优处自动启用 |
+| `ner` | jieba 词性启发式 | **spaCy 统计 NER**（自动优先） |
+| `openie_triples` | jieba 规则（0.35 草稿级） | jieba 规则 / CoreNLP 桥不变 |
+| `seme_lookup`（知网义原） | ✅（需 `[semantic]`） | — |
 
 从源码：
 

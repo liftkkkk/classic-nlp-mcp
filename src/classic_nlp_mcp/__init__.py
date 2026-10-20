@@ -3,5 +3,5 @@
 from . import _compat
 from ._compat import MCP_SDK_MAJOR
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 __all__ = ["__version__", "MCP_SDK_MAJOR"]

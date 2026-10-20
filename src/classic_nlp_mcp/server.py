@@ -71,8 +71,16 @@ def list_capabilities() -> dict[str, Any]:
 
     caps = {
         "mcp_sdk_major": MCP_SDK_MAJOR,
+        "positioning": (
+            "Chinese-first bilingual: zh and en are equally first-class. The base "
+            "install already runs the full Chinese pipeline (jieba); extras 'zh' "
+            "(zh_core_web_sm) upgrades Chinese NER to spaCy statistics."
+        ),
+        "extras": {"zh": "spacy>=3.7 + zh_core_web_sm", "en": "spacy>=3.7 + en_core_web_sm",
+                   "semantic": "nltk + OpenHowNet", "stanford": "stanza>=1.8"},
         "engines": {
-            "jieba": {"installed": True, "optional": False},
+            "jieba": {"installed": True, "optional": False,
+                      "note": "base dependency - full Chinese pipeline out of the box"},
             "spacy": {"installed": spacy_ok, "optional": True,
                       "hint": INSTALL_HINTS["spacy"]},
             "stanza": {"installed": stanza_ok, "optional": True,
@@ -97,8 +105,9 @@ def list_capabilities() -> dict[str, Any]:
             "pos_tag": {"zh": "jieba.posseg / stanza",
                         "en": "spacy / stanza",
                         "multilingual": "stanza"},
-            "ner": {"zh": "stanza statistical" if zh_stanza else "jieba heuristic"
-                            + (" / spacy" if zh_spacy else ""),
+            "ner": {"zh": ("stanza statistical" if zh_stanza
+                           else "spacy statistical ([zh] extra)" if zh_spacy
+                           else "jieba heuristic"),
                     "en": "spacy / stanza",
                     "multilingual": "stanza"},
             "keyword_extract": {"zh": "jieba TF-IDF/TextRank", "en": "frequency fallback"},

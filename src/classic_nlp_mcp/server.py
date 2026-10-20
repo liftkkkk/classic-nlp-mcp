@@ -296,6 +296,13 @@ def constituency_parse(text: str, lang: str = "auto", max_trees: int = 5) -> dic
 # ---------------------------------------------------------------------------
 
 
+def _semantic_unavailable(tool: str, dep: str) -> dict[str, Any]:
+    """Graceful envelope instead of raising through the tool boundary - the
+    mcp SDK turns raw exceptions into opaque ``Error executing tool`` text."""
+    return make_result(tool, "zh" if tool == "seme_lookup" else "en", "unavailable", "-",
+                       supported=False, note=INSTALL_HINTS[dep])
+
+
 @mcp.tool()
 def seme_lookup(word: str, lang: str = "auto") -> dict[str, Any]:
     """HowNet sememe (义原) lookup for a Chinese word via OpenHowNet.
@@ -303,9 +310,9 @@ def seme_lookup(word: str, lang: str = "auto") -> dict[str, Any]:
     and sememe-based similarity."""
     lang = _resolve_lang(word, lang)
     adapter = REGISTRY.get("openhownet", "zh" if lang == "zh" else "zh")
-    if adapter:
+    if adapter and _hownet_ready():
         return adapter.seme_lookup(word)
-    raise MissingDependency("OpenHowNet")
+    return _semantic_unavailable("seme_lookup", "OpenHowNet")
 
 
 @mcp.tool()
@@ -315,7 +322,7 @@ def wordnet_lookup(word: str, max_synsets: int = 5) -> dict[str, Any]:
     adapter = REGISTRY.get("nltk", "en")
     if adapter and _nltk_ready():
         return adapter.wordnet_lookup(word, max_synsets=max_synsets)
-    raise MissingDependency("nltk")
+    return _semantic_unavailable("wordnet_lookup", "nltk")
 
 
 @mcp.tool()
@@ -324,7 +331,7 @@ def wordnet_similarity(word_a: str, word_b: str) -> dict[str, Any]:
     adapter = REGISTRY.get("nltk", "en")
     if adapter and _nltk_ready():
         return adapter.wordnet_similarity(word_a, word_b)
-    raise MissingDependency("nltk")
+    return _semantic_unavailable("wordnet_similarity", "nltk")
 
 
 def _nltk_ready() -> bool:

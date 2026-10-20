@@ -7,6 +7,8 @@ OpenHowNet (THUNLP) is optional::
 
 from __future__ import annotations
 
+import contextlib
+import sys
 from typing import Any
 
 from ..adapters.base import make_result, try_import
@@ -16,7 +18,10 @@ _OpenHowNet = try_import("OpenHowNet")
 _hownet = None
 if _OpenHowNet is not None:
     try:
-        _hownet = _OpenHowNet.HowNetDict()
+        # OpenHowNet prints banners/warnings to stdout, which would corrupt
+        # the MCP stdio JSON-RPC stream - force every print onto stderr.
+        with contextlib.redirect_stdout(sys.stderr):
+            _hownet = _OpenHowNet.HowNetDict()
     except Exception:
         _hownet = None
 
@@ -51,13 +56,14 @@ class OpenHowNetAdapter:
         hnd = self._require()
         senses: list[dict[str, Any]] = []
         try:
-            anns = hnd.get(word, lang="zh")[:max_senses]
+            with contextlib.redirect_stdout(sys.stderr):
+                anns = hnd.get_sememes_by_word(word)[:max_senses]
         except Exception:
             anns = []
         for ann in anns:
             entry = {
-                "sense": ann.get("en_grammar") or ann.get("zh_grammar") or "",
-                "sememes": ann.get("sememes", []),
+                "sense": str(ann.get("sense", "")),
+                "sememes": [str(s) for s in ann.get("sememes", [])],
             }
             senses.append(entry)
         sememe_set = sorted({s for entry in senses for s in entry["sememes"]})

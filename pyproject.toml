@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "classic-nlp-mcp"
-version = "0.2.1"
+version = "0.2.2"
 description = "Deterministic bilingual (Chinese-first) classical NLP (spaCy, jieba, NLTK, OpenHowNet) exposed as capability-level MCP tools for LLM agents."
 readme = "README.md"
 license = { file = "LICENSE" }

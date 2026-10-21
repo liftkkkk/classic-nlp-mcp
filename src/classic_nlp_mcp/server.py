@@ -50,6 +50,73 @@ def _engine_name(lang: str, engine: str | None, default: str) -> str:
     return engine or default
 
 
+_ALLOWED_ENGINES = ("jieba", "spacy", "stanza")
+
+
+def _pick_engine(engine: str, tool: str) -> str:
+    """Validate an engine request.  Unknown values raise instead of being
+    silently ignored - the mcp SDK drops extra kwargs, so an unvalidated
+    engine used to disappear without a trace."""
+    engine = (engine or "auto").strip().lower()
+    if engine != "auto" and engine not in _ALLOWED_ENGINES:
+        raise ValueError(
+            f"unknown engine {engine!r} for {tool}; allowed: auto, "
+            + ", ".join(_ALLOWED_ENGINES))
+    return engine
+
+
+def _zh_adapter(name: str):
+    if name == "jieba":
+        return REGISTRY.get("jieba", "zh")
+    if name == "spacy":
+        adapter = REGISTRY.get("spacy", "zh")
+        return adapter if adapter and adapter.available else None
+    return _stanza_for("zh")
+
+
+def _adapter_for(lang: str, engine: str, cap: str):
+    """Resolve an adapter honoring an explicit engine request.
+
+    ``engine='auto'`` keeps the documented per-capability priority.  An
+    explicit engine is honored when installed and raises MissingDependency
+    with an actionable install hint otherwise - a forced engine is never
+    silently downgraded (fixed in v0.2.3; before that, tokenize/pos_tag/ner
+    had no engine parameter at all and spaCy always shadowed stanza)."""
+    if lang == "zh":
+        priority = ("stanza", "spacy", "jieba") if cap == "ner" \
+            else ("jieba", "spacy", "stanza")
+        if engine == "auto":
+            for name in priority:
+                adapter = _zh_adapter(name)
+                if adapter is not None:
+                    return adapter
+            return REGISTRY.get("jieba", "zh")
+        if engine not in priority and engine != "jieba":
+            raise ValueError(
+                f"engine {engine!r} is not a Chinese engine for {cap}; "
+                f"allowed: auto, {', '.join(priority)}")
+        adapter = _zh_adapter(engine)
+        if adapter is None:
+            raise MissingDependency(engine)
+        return adapter
+    # non-Chinese
+    if engine == "jieba":
+        raise ValueError(
+            "engine 'jieba' is Chinese-only; use auto | spacy | stanza here")
+    if engine in ("auto", "spacy"):
+        adapter = REGISTRY.get("spacy", "en")
+        if adapter and adapter.available:
+            return adapter
+        if engine == "spacy":
+            raise MissingDependency("spacy")
+    stanza = _stanza_for(lang)
+    if stanza is not None:
+        return stanza
+    if engine == "stanza":
+        raise MissingDependency("stanza")
+    return None
+
+
 # ---------------------------------------------------------------------------
 # list_capabilities
 # ---------------------------------------------------------------------------
@@ -100,16 +167,20 @@ def list_capabilities() -> dict[str, Any]:
                            "hint": INSTALL_HINTS["OpenHowNet"]},
         },
         "capabilities": {
-            "tokenize": {"zh": "jieba (regex fallback)", "en": "spacy / stanza / regex fallback",
-                         "multilingual": "stanza (any downloaded lang code)"},
+            "tokenize": {"zh": "jieba (regex fallback)",
+                         "en": "spacy / stanza / regex fallback",
+                         "multilingual": "stanza (any downloaded lang code)",
+                         "engine": "auto | jieba | spacy | stanza (forced engine raises a hint when unavailable)"},
             "pos_tag": {"zh": "jieba.posseg / stanza",
                         "en": "spacy / stanza",
-                        "multilingual": "stanza"},
+                        "multilingual": "stanza",
+                        "engine": "auto | jieba | spacy | stanza (engine='stanza' adds lemma)"},
             "ner": {"zh": ("stanza statistical" if zh_stanza
                            else "spacy statistical ([zh] extra)" if zh_spacy
                            else "jieba heuristic"),
                     "en": "spacy / stanza",
-                    "multilingual": "stanza"},
+                    "multilingual": "stanza",
+                    "engine": "auto | jieba | spacy | stanza"},
             "keyword_extract": {"zh": "jieba TF-IDF/TextRank", "en": "frequency fallback"},
             "sent_split": {"zh": "jieba+regex", "en": "spacy / stanza / regex fallback"},
             "openie_triples": {
@@ -140,65 +211,55 @@ def list_capabilities() -> dict[str, Any]:
 
 
 @mcp.tool()
-def tokenize(text: str, lang: str = "auto") -> dict[str, Any]:
+def tokenize(text: str, lang: str = "auto", engine: str = "auto") -> dict[str, Any]:
     """Segment text into tokens with exact character offsets.
 
-    Chinese uses jieba; English uses spaCy when installed, otherwise a
-    regex fallback.  ``lang``: "auto" | "zh" | "en".
+    Chinese: jieba by default; English: spaCy when installed, then stanza,
+    then a regex fallback.  ``engine`` may force one: "jieba" | "spacy" |
+    "stanza" - an unavailable forced engine raises an actionable install
+    hint instead of being silently ignored.  ``lang``: "auto" | "zh" | "en"
+    | any stanza language code (fr, de, ja, ...).
     """
     lang = _resolve_lang(text, lang)
-    if lang == "zh":
-        return REGISTRY.get("jieba", "zh").tokenize(text)
-    adapter = REGISTRY.get("spacy", "en")
-    if adapter and adapter.available:
+    engine = _pick_engine(engine, "tokenize")
+    adapter = _adapter_for(lang, engine, "tokenize")
+    if adapter is not None:
         return adapter.tokenize(text)
-    st = _stanza_for(lang)
-    if st:
-        return st.tokenize(text)
     if lang != "en":
         raise MissingDependency("stanza")
     return fallback.fallback_tokenize(text, "en")
 
 
 @mcp.tool()
-def pos_tag(text: str, lang: str = "auto") -> dict[str, Any]:
+def pos_tag(text: str, lang: str = "auto", engine: str = "auto") -> dict[str, Any]:
     """Part-of-speech tagging (+ lemma with stanza).  Chinese: jieba.posseg;
-    English: spaCy then stanza; other languages: stanza.  Raises an
-    actionable install hint when no engine is available."""
+    English: spaCy then stanza; other languages: stanza.  ``engine`` may
+    force one: "jieba" | "spacy" | "stanza" - use engine="stanza" to get
+    UPOS + lemma even when spaCy is installed.  An unavailable forced
+    engine raises an actionable install hint instead of being silently
+    ignored."""
     lang = _resolve_lang(text, lang)
-    if lang == "zh":
-        return REGISTRY.get("jieba", "zh").pos_tag(text)
-    adapter = REGISTRY.get("spacy", "en")
-    if adapter and adapter.available:
+    engine = _pick_engine(engine, "pos_tag")
+    adapter = _adapter_for(lang, engine, "pos_tag")
+    if adapter is not None:
         return adapter.pos_tag(text)
-    st = _stanza_for(lang)
-    if st:
-        return st.pos_tag(text)
     raise MissingDependency("stanza" if lang != "en" else "spacy")
 
 
 @mcp.tool()
-def ner(text: str, lang: str = "auto") -> dict[str, Any]:
+def ner(text: str, lang: str = "auto", engine: str = "auto") -> dict[str, Any]:
     """Named entity recognition with exact spans.
 
     Chinese: stanza statistical NER when installed (recommended), otherwise
     the jieba POS-tag heuristic (nr/ns/nt -> PER/LOC/ORG).  English: spaCy,
-    then stanza.  Other languages: stanza."""
+    then stanza.  Other languages: stanza.  ``engine`` may force one:
+    "jieba" | "spacy" | "stanza" - an unavailable forced engine raises an
+    actionable install hint instead of being silently ignored."""
     lang = _resolve_lang(text, lang)
-    if lang == "zh":
-        zh_st = _stanza_for("zh")
-        if zh_st:
-            return zh_st.ner(text)
-        zh_spacy = REGISTRY.get("spacy", "zh")
-        if zh_spacy and zh_spacy.available:
-            return zh_spacy.ner(text)
-        return REGISTRY.get("jieba", "zh").ner(text)
-    adapter = REGISTRY.get("spacy", "en")
-    if adapter and adapter.available:
+    engine = _pick_engine(engine, "ner")
+    adapter = _adapter_for(lang, engine, "ner")
+    if adapter is not None:
         return adapter.ner(text)
-    st = _stanza_for(lang)
-    if st:
-        return st.ner(text)
     raise MissingDependency("stanza" if lang != "en" else "spacy")
 
 
@@ -266,7 +327,15 @@ def openie_triples(text: str, lang: str = "auto", engine: str = "auto") -> dict[
 
             raise RuntimeError(corenlp_adapter.setup_hint())
     if lang == "zh":
-        return REGISTRY.get("jieba", "zh").openie_triples(text)
+        result = REGISTRY.get("jieba", "zh").openie_triples(text)
+        if engine == "corenlp":
+            # forced CoreNLP on Chinese: honest degradation, never silent
+            result["requested_engine"] = "corenlp"
+            result["fallback"] = True
+            result["note"] = ("CoreNLP OpenIE is English-only - the forced "
+                              "engine='corenlp' fell back to jieba rule "
+                              "mining for Chinese.  " + result.get("note", ""))
+        return result
     adapter = REGISTRY.get("spacy", "en")
     if adapter and adapter.available:
         return adapter.openie_triples(text)

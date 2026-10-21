@@ -252,3 +252,63 @@ async def _handshake():
             payload = json.loads(res.content[0].text)
             assert payload["lang"] == "zh"
             assert payload["tokens"]
+
+
+# ---------------------------------------------------------------------------
+# v0.2.3: forced-engine semantics (a forced engine is never silently ignored)
+# ---------------------------------------------------------------------------
+
+
+def test_forced_engine_unknown_value_raises():
+    from classic_nlp_mcp.server import ner, tokenize
+
+    with pytest.raises(ValueError, match="unknown engine"):
+        tokenize("hello", "en", engine="chatgpt")
+    with pytest.raises(ValueError, match="unknown engine"):
+        ner("hello", "en", engine="regex")
+
+
+def test_forced_engine_jieba_rejected_for_english():
+    from classic_nlp_mcp.server import pos_tag
+
+    with pytest.raises(ValueError, match="Chinese-only"):
+        pos_tag("hello world", "en", engine="jieba")
+
+
+def test_forced_engine_honored_when_available():
+    from classic_nlp_mcp.server import _stanza_for, tokenize
+
+    if not _stanza_for("en"):
+        pytest.skip("stanza en models not downloaded")
+    r = tokenize("Apple hired John in Seattle.", "en", engine="stanza")
+    assert r["engine"].startswith("stanza"), r.get("engine")
+    assert r["tokens"]
+
+
+def test_forced_spacy_honored_for_english():
+    from classic_nlp_mcp.server import pos_tag, tokenize
+
+    r = tokenize("Apple hired John in Seattle.", "en", engine="spacy")
+    assert r["engine"].startswith("spacy"), r.get("engine")
+    p = pos_tag("Apple hired John in Seattle.", "en", engine="spacy")
+    assert p["engine"].startswith("spacy"), p.get("engine")
+
+
+def test_forced_stanza_missing_models_raises_hint():
+    from classic_nlp_mcp.adapters.base import MissingDependency  # noqa: F401
+    from classic_nlp_mcp.server import ner
+
+    if __import__("classic_nlp_mcp.server", fromlist=["_stanza_for"])._stanza_for("fr"):
+        pytest.skip("french stanza models present - nothing to force-fail")
+    with pytest.raises(Exception, match="stanza"):
+        ner("Bonjour le monde", "fr", engine="stanza")
+
+
+def test_forced_corenlp_on_chinese_degrades_honestly():
+    from classic_nlp_mcp.server import openie_triples
+
+    r = openie_triples("智谱在北京发布了新模型。", "zh", engine="corenlp")
+    assert r["engine"].startswith("jieba")
+    assert r.get("requested_engine") == "corenlp"
+    assert r.get("fallback") is True
+    assert "English-only" in r.get("note", "")

@@ -119,6 +119,76 @@ class SpaCyAdapter:
             "sent_split", self.lang, "spacy", module_version(_spacy), sentences=sentences
         )
 
+    def dependency_parse(self, text: str, max_sents: int = 5) -> dict[str, Any]:
+        """Statistical dependency parse with morphological features.
+
+        English: ClearNLP/EnConvert-style labels (en_core_web_sm).  Chinese:
+        provided for completeness - zh models carry coarse labels, prefer the
+        stanza engine there."""
+        nlp = self._require()
+        if self.lang == "zh":
+            return make_result(
+                "dependency_parse", "zh", "spacy", module_version(_spacy),
+                sentences=[], supported=False,
+                note="Chinese dependency labels from zh_core_web_sm are coarse; "
+                     "use engine='stanza' for universal-dependencies parses.",
+            )
+        doc = nlp(text)
+        sentences = []
+        for sent in list(doc.sents)[:max_sents]:
+            by_id = {t.i: t for t in sent}
+            words = [
+                {
+                    "id": t.i - sent[0].i + 1,  # 1-based within sentence, UD-style
+                    "text": t.text,
+                    "start": t.idx,
+                    "end": t.idx + len(t.text),
+                    "head": (t.head.i - sent[0].i + 1) if t.head.i in by_id else 0,
+                    "head_text": t.head.text if t.head.i in by_id else "",
+                    "deprel": t.dep_,
+                    "upos": t.pos_,
+                    "feats": str(t.morph),
+                    "lemma": t.lemma_ if t.lemma_ else "",
+                }
+                for t in sent
+            ]
+            sentences.append(
+                {"text": sent.text, "start": sent.start_char, "end": sent.end_char,
+                 "words": words}
+            )
+        return make_result(
+            "dependency_parse", "en", "spacy", module_version(_spacy),
+            sentences=sentences, scheme="clear-style (en_core_web)",
+        )
+
+    def noun_phrases(self, text: str) -> dict[str, Any]:
+        """Base noun phrases (chunking) with their syntactic role.
+
+        English: spaCy's statistical noun-chunker.  Chinese: not provided -
+        zh models lack reliable chunk boundaries; use the jieba heuristic."""
+        nlp = self._require()
+        if self.lang == "zh":
+            return make_result(
+                "noun_phrases", "zh", "spacy", module_version(_spacy),
+                phrases=[], supported=False,
+                note="zh_core_web_sm has no reliable noun-chunk boundaries; "
+                     "use engine='jieba' for the rule-based merge.",
+            )
+        doc = nlp(text)
+        phrases = [
+            {
+                "text": c.text,
+                "start": c.start_char,
+                "end": c.end_char,
+                "root": c.root.text,
+                "root_dep": c.root.dep_,
+            }
+            for c in doc.noun_chunks
+        ]
+        return make_result(
+            "noun_phrases", "en", "spacy", module_version(_spacy), phrases=phrases
+        )
+
     # -- OpenIE -----------------------------------------------------------------
 
     _OBJ_DEPS = {"dobj", "obj", "dative", "iobj", "attr", "oprd"}

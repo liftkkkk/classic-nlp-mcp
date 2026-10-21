@@ -22,11 +22,12 @@ from . import fallback
 mcp = FastMCP(
     "classic-nlp-mcp",
     instructions=(
-        "Deterministic classical NLP (spaCy / jieba / NLTK / OpenHowNet) exposed as "
-        "capability-level MCP tools. Use for cheap, reproducible, offline language "
+        "Deterministic classical NLP (spaCy / jieba / NLTK / OpenHowNet / Stanford) "
+        "exposed as capability-level MCP tools. Cheap, reproducible, offline language "
         "analysis: tokenization, POS, NER, keywords, sentence splitting, OpenIE "
-        "triples for KG construction, sememe/WordNet lookups. All results carry "
-        "exact character offsets and an honest engine attribution."
+        "triples, constituency AND dependency parsing, noun-phrase chunking, "
+        "sentiment classification (neural models), sememe/WordNet lookups. All "
+        "results carry exact character offsets and honest engine attribution."
     ),
 )
 
@@ -50,7 +51,7 @@ def _engine_name(lang: str, engine: str | None, default: str) -> str:
     return engine or default
 
 
-_ALLOWED_ENGINES = ("jieba", "spacy", "stanza")
+_ALLOWED_ENGINES = ("jieba", "spacy", "stanza", "nltk")
 
 
 def _pick_engine(engine: str, tool: str) -> str:
@@ -194,6 +195,24 @@ def list_capabilities() -> dict[str, Any]:
                 "zh": "stanza" if zh_stanza else "unavailable",
                 "en": "stanza" if en_stanza else "unavailable",
                 "note": "phrase-structure trees - exclusive to the Stanford stack here",
+            },
+            "dependency_parse": {
+                "zh": "stanza (universal-dependencies)" if zh_stanza else "unavailable (needs stanza zh models)",
+                "en": "spacy / stanza",
+                "note": "head + deprel + morphological feats per word; "
+                        "syntax-aware extraction lives here",
+            },
+            "noun_phrases": {
+                "zh": "jieba rule-merge (heuristic)",
+                "en": "spacy chunker",
+                "note": "topic-granularity units; for higher-quality Chinese NPs "
+                        "take NOUN subtrees from dependency_parse",
+            },
+            "sentiment": {
+                "zh": "stanza neural classifier (REN)" if zh_stanza else "unavailable (needs stanza zh models)",
+                "en": "nltk VADER lexicon / stanza",
+                "engine": "auto | nltk | stanza (VADER is English-only here)",
+                "note": "pretrained classifiers, per-sentence labels",
             },
             "wordnet_lookup": {"en": "nltk" if (nltk_ok and REGISTRY.get("nltk", "en")) else "unavailable"},
             "wordnet_similarity": {"en": "nltk" if (nltk_ok and REGISTRY.get("nltk", "en")) else "unavailable"},
@@ -372,6 +391,136 @@ def _semantic_unavailable(tool: str, dep: str) -> dict[str, Any]:
                        supported=False, note=INSTALL_HINTS[dep])
 
 
+# ---------------------------------------------------------------------------
+# v0.3.0: dependency parse / noun phrases / sentiment - the model-backed tier
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def dependency_parse(
+    text: str, lang: str = "auto", engine: str = "auto", max_sents: int = 5
+) -> dict[str, Any]:
+    """Neural/statistical dependency parse: head, relation label, POS and
+    morphological features per word (universal-dependencies for stanza).
+
+    English: spaCy (en_core_web) by default, stanza also available.
+    Chinese: stanza only - spaCy zh labels are coarse; jieba cannot parse.
+    This is the entry point for syntax-aware extraction: definitional
+    clauses, subject/object probing, syntactic patterns - far above
+    keyword statistics."""
+    lang = _resolve_lang(text, lang)
+    engine = _pick_engine(engine, "dependency_parse")
+    if lang == "zh":
+        if engine == "auto":
+            st = _stanza_for("zh")
+            if st:
+                return st.dependency_parse(text, max_sents)
+            return _unavailable("dependency_parse", "zh", "stanza")
+        if engine != "stanza":
+            raise ValueError(
+                f"engine {engine!r} cannot dependency-parse Chinese; "
+                "allowed: auto, stanza")
+        st = _stanza_for("zh")
+        if not st:
+            raise MissingDependency("stanza")
+        return st.dependency_parse(text, max_sents)
+    adapter = _adapter_for(lang, engine, "dependency_parse")
+    if adapter is not None and hasattr(adapter, "dependency_parse"):
+        return adapter.dependency_parse(text, max_sents)
+    raise MissingDependency("spacy" if engine in ("auto", "spacy") else "stanza")
+
+
+@mcp.tool()
+def noun_phrases(text: str, lang: str = "auto", engine: str = "auto") -> dict[str, Any]:
+    """Extract base noun phrases (chunking) with spans and syntactic roots.
+
+    English: spaCy's statistical chunker.  Chinese: jieba rule-merge of
+    consecutive noun tokens (a heuristic, honestly labeled), or the stanza
+    engine via dependency_parse for higher quality.  Noun phrases are the
+    natural topic units - cleaner than raw keyword statistics."""
+    lang = _resolve_lang(text, lang)
+    engine = _pick_engine(engine, "noun_phrases")
+    if lang == "zh":
+        if engine == "spacy":
+            zh_spacy = _zh_adapter("spacy")
+            if zh_spacy is None:
+                raise MissingDependency("spacy")
+            return zh_spacy.noun_phrases(text)
+        if engine == "stanza":
+            raise ValueError(
+                "engine 'stanza' does not provide noun_phrases for Chinese; "
+                "use dependency_parse (engine='stanza') and take NOUN subtrees, "
+                "or engine='jieba' for the rule merge")
+        return REGISTRY.get("jieba", "zh").noun_phrases(text)
+    adapter = _adapter_for(lang, engine, "noun_phrases")
+    if adapter is not None and hasattr(adapter, "noun_phrases"):
+        return adapter.noun_phrases(text)
+    raise MissingDependency("spacy" if engine in ("auto", "spacy") else "stanza")
+
+
+_VADER: Any = None
+
+
+def _vader() -> Any:
+    global _VADER
+    if _VADER is None:
+        try:
+            from nltk.sentiment.vader import SentimentIntensityAnalyzer
+
+            _VADER = SentimentIntensityAnalyzer()
+        except LookupError as exc:
+            raise MissingDependency(
+                "nltk vader_lexicon - run: python -c \"import nltk; "
+                "nltk.download('vader_lexicon')\"") from exc
+    return _VADER
+
+
+@mcp.tool()
+def sentiment(text: str, lang: str = "auto", engine: str = "auto") -> dict[str, Any]:
+    """Sentiment classification with pretrained models.
+
+    English: NLTK VADER (valence lexicon, compound score).  Chinese: stanza
+    neural classifier (REN model) with per-sentence labels - a trained
+    model, not a lexicon lookup.  Use auto to get the best installed engine."""
+    lang = _resolve_lang(text, lang)
+    engine = _pick_engine(engine, "sentiment")
+    if lang == "zh":
+        if engine == "nltk":
+            raise ValueError("engine 'nltk' (VADER) is English-only here; "
+                             "allowed for zh: auto, stanza")
+        st = _stanza_for("zh")
+        if st:
+            return st.sentiment(text)
+        if engine == "stanza":
+            raise MissingDependency("stanza")
+        return _unavailable("sentiment", "zh", "stanza")
+    if engine == "stanza":
+        st = _stanza_for(lang)
+        if not st:
+            raise MissingDependency("stanza")
+        return st.sentiment(text)
+    sia = _vader()
+    scores = sia.polarity_scores(text)
+    compound = scores["compound"]
+    label = "positive" if compound >= 0.05 else \
+        "negative" if compound <= -0.05 else "neutral"
+    return make_result(
+        "sentiment", lang, "nltk.vader", _nltk_version(), scores=scores, overall=label,
+    )
+
+
+def _nltk_version() -> str:
+    from .adapters import nltk_adapter
+
+    return nltk_adapter.module_version(nltk_adapter._nltk) if nltk_adapter._nltk else "-"
+
+
+def _unavailable(tool: str, lang: str, dep: str) -> dict[str, Any]:
+    """Graceful 'engine not installed' envelope for auto-engine calls."""
+    return make_result(tool, lang, "unavailable", "-",
+                       supported=False, note=INSTALL_HINTS[dep])
+
+
 @mcp.tool()
 def seme_lookup(word: str, lang: str = "auto") -> dict[str, Any]:
     """HowNet sememe (义原) lookup for a Chinese word via OpenHowNet.
@@ -448,6 +597,8 @@ def annotate_full(text: str, lang: str = "auto", with_semantics: bool = False) -
     _run("keyword_extract", keyword_extract, text)
     _run("sent_split", sent_split, text, lang)
     _run("openie_triples", openie_triples, text, lang)
+    _run("dependency_parse", dependency_parse, text, lang, "auto", "auto", 3)
+    _run("sentiment", sentiment, text, lang)
     if with_semantics:
         if lang == "zh":
             _run("seme_lookup", seme_lookup, text)

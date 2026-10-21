@@ -36,7 +36,7 @@
 1. **包装能力，不包装库**。工具面向任务（`tokenize`、`openie_triples`、`seme_lookup`），库只是适配器背后可替换的引擎。
 2. **单网关 + 可选引擎**。一个 MCP 进程搞定；重引擎（spaCy、NLTK、OpenHowNet）都是可选依赖，`jieba` 是唯一的必装依赖——**中文开箱即用**：分词、词性、关键词、切句、规则版中文 OpenIE、（装了 `[semantic]` 后的）知网义原，零额外安装全都能跑。`[zh]` extra 是中文的推荐升级路径（统计 NER）。
 3. **统一输出 Schema**。所有工具返回同一信封结构，引擎归属诚实标注，字符偏移精确对齐原文。
-4. **优雅降级，绝不撒谎**。缺可选依赖 → 给出可操作的安装提示（不是崩）；降级引擎明确标注（`regex-fallback`）。点名引擎同样诚实：`tokenize` / `pos_tag` / `ner` / `sent_split` / `openie_triples` 都接受 `engine="jieba" | "spacy" | "stanza" | "regex" | "corenlp"`——想强制 spaCy 装了之后被遮蔽的 stanza？`engine="stanza"` 即可（还附带 lemma）。强制的引擎不可用时报安装提示而不是悄悄换人；对中文强制 `engine="corenlp"` 会降级到 jieba 规则并显式打上 `fallback: true` 标记（v0.2.3）。
+4. **优雅降级，绝不撒谎**。缺可选依赖 → 给出可操作的安装提示（不是崩）；降级引擎明确标注（`regex-fallback`）。点名引擎同样诚实：`tokenize` / `pos_tag` / `ner` / `sent_split` / `openie_triples` 都接受 `engine="jieba" | "spacy" | "stanza" | "regex" | "corenlp"`——想强制 spaCy 装了之后被遮蔽的 stanza？`engine="stanza"` 即可（还附带 lemma）。强制的引擎不可用时报安装提示而不是悄悄换人；对中文强制 `engine="corenlp"` 会降级到 jieba 规则并显式打上 `fallback: true` 标记（v0.2.3）。模型层三兄弟 `dependency_parse` / `noun_phrases` / `sentiment`（v0.3.0）遵守同一契约。
 5. **mcp SDK 1.x / 2.x 双兼容**。`mcp` 2.0 把 `FastMCP` 改名为 `MCPServer` 并删除了旧导入路径；兼容垫片见 [`src/classic_nlp_mcp/_compat.py`](src/classic_nlp_mcp/_compat.py)。
 
 ## 架构
@@ -65,6 +65,9 @@ spaCy  jieba       NLTK        OpenHowNet
 | `sent_split` | 句子切分（RAG 分块地基） | jieba+规则 / spaCy → stanza → 正则兜底 |
 | `openie_triples` | 开放三元组（S,P,O），带来源 span 与置信度 | jieba 规则（中文，草稿级）/ **Stanford CoreNLP**（正统）→ spaCy 依存规则 |
 | `constituency_parse` | 成分句法树 + 节点标签 | stanza（斯坦福独占） |
+| `dependency_parse` | 依存句法：head、deprel、词性、形态学特征 | stanza（中文，通用依存）/ spaCy → stanza |
+| `noun_phrases` | 名词短语组块（含句法根） | jieba 规则合并（中文，启发式）/ spaCy 组块器 |
+| `sentiment` | 情感分类（逐句标签） | stanza 神经分类器 REN（中文）/ NLTK VADER、stanza（英文） |
 | `seme_lookup` | 知网义原查询 | OpenHowNet（中文） |
 | `wordnet_lookup` | 同义词组、定义、上位词 | NLTK WordNet（英文） |
 | `wordnet_similarity` | WordNet 路径相似度 | NLTK WordNet（英文） |

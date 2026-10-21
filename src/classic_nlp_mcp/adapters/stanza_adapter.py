@@ -68,15 +68,15 @@ def _models_present(lang: str) -> bool:
 class StanzaAdapter:
     def __init__(self, lang: str) -> None:
         self.lang = lang
-        self._nlp: Any | None = None
+        self._pipelines: dict[str, Any] = {}  # processors-string -> Pipeline
         self._load_error: str | None = None
 
     def _require(self, processors: str) -> Any:
-        if self._nlp is None:
+        if processors not in self._pipelines:
             if self._load_error:
                 raise RuntimeError(self._load_error)
             try:
-                self._nlp = _stanza.Pipeline(
+                self._pipelines[processors] = _stanza.Pipeline(
                     self.lang,
                     processors=processors,
                     download_method=None,  # never auto-download from a tool call
@@ -85,7 +85,7 @@ class StanzaAdapter:
             except Exception as exc:
                 self._load_error = _DEFAULT_HINT + f" (load error: {exc})"
                 raise RuntimeError(self._load_error) from exc
-        return self._nlp
+        return self._pipelines[processors]
 
     # -- internals -----------------------------------------------------------
 
@@ -205,6 +205,74 @@ class StanzaAdapter:
                 break
         return make_result(
             "constituency_parse", self.lang, "stanza", _stanza.__version__, trees=trees
+        )
+
+    def dependency_parse(self, text: str, max_sents: int = 5) -> dict[str, Any]:
+        """Universal-Dependencies neural dependency parse (head, deprel, feats).
+
+        Works for every language with downloaded models - including Chinese,
+        where spaCy's dependency labels are unreliable and no other wrapped
+        engine provides a parse at all."""
+        nlp = self._require("tokenize,pos,lemma,depparse")
+        doc = nlp(text)
+        sentences, base = [], 0
+        for sent in doc.sentences:
+            start = base
+            if sent.tokens and sent.tokens[0].start_char is not None:
+                start = base + sent.tokens[0].start_char
+            last = sent.tokens[-1]
+            end = base + last.start_char + len(last.text) if last.start_char is not None \
+                else base + sum(len(t.text) for t in sent.tokens)
+            words = [
+                {
+                    "id": w.id,
+                    "text": w.text,
+                    "head": w.head,           # 1-based word id; 0 = ROOT
+                    "deprel": w.deprel,
+                    "upos": w.upos,
+                    "feats": w.feats or "",
+                    "lemma": w.lemma or "",
+                }
+                for w in sent.words
+            ]
+            sentences.append(
+                {"text": sent.text, "start": start, "end": end, "words": words}
+            )
+            base = end
+            if len(sentences) >= max_sents:
+                break
+        return make_result(
+            "dependency_parse", self.lang, "stanza", _stanza.__version__,
+            sentences=sentences, scheme="universal-dependencies",
+        )
+
+    def sentiment(self, text: str) -> dict[str, Any]:
+        """Neural sentiment classification (1-3 class model, per sentence).
+
+        English uses the SST treebank model, Chinese the REN (news e-commerce
+        review) model - both trained classifiers, not lexicon lookups."""
+        nlp = self._require("tokenize,sentiment")
+        doc = nlp(text)
+        label_of = {0: "negative", 1: "neutral", 2: "positive"}
+        per_sentence = [
+            {"text": s.text, "label": label_of.get(s.sentiment, str(s.sentiment))}
+            for s in doc.sentences
+        ]
+        counts: dict[str, int] = {"negative": 0, "neutral": 0, "positive": 0}
+        for s in per_sentence:
+            if s["label"] in counts:
+                counts[s["label"]] += 1
+        total = max(len(per_sentence), 1)
+        pos, neg = counts["positive"] / total, counts["negative"] / total
+        if pos - neg > 0.25:
+            overall = "positive"
+        elif neg - pos > 0.25:
+            overall = "negative"
+        else:
+            overall = "mixed" if (pos or neg) else "neutral"
+        return make_result(
+            "sentiment", self.lang, "stanza", _stanza.__version__,
+            sentences=per_sentence, counts=counts, overall=overall,
         )
 
 

@@ -80,6 +80,40 @@ class JiebaAdapter:
             note="Heuristic mapping of POS tags (nr/ns/nt); install spaCy zh model for statistical NER.",
         )
 
+    def noun_phrases(self, text: str) -> dict[str, Any]:
+        """Rule-based noun phrases: merge runs of consecutive noun-tagged
+        tokens (n* flags).  A heuristic - the stanza engine provides neural
+        dependency-based extraction quality instead."""
+        phrases: list[dict[str, Any]] = []
+        run: list[dict[str, Any]] = []
+
+        def _flush() -> None:
+            if run:
+                phrases.append({
+                    "text": "".join(t["text"] for t in run),
+                    "start": run[0]["start"],
+                    "end": run[-1]["end"],
+                    "root": run[-1]["text"],
+                    "root_dep": "heuristic-np",
+                })
+                run.clear()
+
+        cursor = 0
+        for word, flag in jieba.posseg.cut(text):
+            start = text.find(word, cursor)
+            end = start + len(word)
+            cursor = end
+            if flag.startswith("n") or flag in ("eng",):
+                run.append({"text": word, "start": start, "end": end})
+            else:
+                _flush()
+        _flush()
+        return make_result(
+            "noun_phrases", "zh", "jieba.posseg", _ZH_VERSION, phrases=phrases,
+            note="Rule-based merge of consecutive noun-tagged tokens; "
+                 "use engine='stanza' for dependency-based quality.",
+        )
+
     def keyword_extract(self, text: str, top_k: int = 10, method: str = "tfidf") -> dict[str, Any]:
         if method == "textrank":
             pairs = jieba.analyse.textrank(text, topK=top_k, withWeight=True)

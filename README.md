@@ -36,7 +36,7 @@ In the LLM era, classical NLP libraries did not become useless — they changed 
 1. **Wrap capabilities, not libraries.** Tools are task-oriented (`tokenize`, `openie_triples`, `seme_lookup`); libraries are swappable backends behind adapters.
 2. **One gateway, optional engines.** A single MCP server process; heavy engines (spaCy, NLTK, OpenHowNet) are optional extras. `jieba` is the only mandatory dependency, so **Chinese works out of the box** — tokenize, POS, keywords, sentence splitting, rule-based Chinese OpenIE and HowNet sememes all run with zero extra installs. The `[zh]` extra upgrades Chinese further (statistical NER).
 3. **Unified output schema.** Every tool returns the same envelope with honest engine attribution and exact character offsets.
-4. **Graceful degradation, never silent lies.** Missing optional dependency → an actionable install hint (not a crash); fallback engines are labeled as such (`regex-fallback`). Forcing an engine is equally honest: `tokenize` / `pos_tag` / `ner` / `sent_split` / `openie_triples` accept `engine="jieba" | "spacy" | "stanza" | "regex" | "corenlp"` — an unavailable forced engine raises an install hint instead of silently downgrading, and a forced CoreNLP on Chinese degrades to jieba rules *with an explicit `fallback: true` marker* (v0.2.3).
+4. **Graceful degradation, never silent lies.** Missing optional dependency → an actionable install hint (not a crash); fallback engines are labeled as such (`regex-fallback`). Forcing an engine is equally honest: `tokenize` / `pos_tag` / `ner` / `sent_split` / `openie_triples` accept `engine="jieba" | "spacy" | "stanza" | "regex" | "corenlp"` — an unavailable forced engine raises an install hint instead of silently downgrading, and a forced CoreNLP on Chinese degrades to jieba rules *with an explicit `fallback: true` marker* (v0.2.3). The model-backed tier (`dependency_parse` / `noun_phrases` / `sentiment`, v0.3.0) follows the same contract.
 5. **mcp SDK 1.x and 2.x compatible.** The `mcp` 2.0 release renamed `FastMCP` → `MCPServer` and removed the old import path; a compat shim ([`src/classic_nlp_mcp/_compat.py`](src/classic_nlp_mcp/_compat.py)) supports both lines.
 
 ## Architecture
@@ -65,6 +65,9 @@ spaCy  jieba       NLTK        OpenHowNet
 | `sent_split` | Sentence segmentation (RAG chunking base) | jieba+regex / spaCy → stanza → regex fallback |
 | `openie_triples` | OpenIE (S, P, O) triples with source span & confidence | jieba rule (zh, draft quality) / **Stanford CoreNLP** (canonical) → spaCy dep rules |
 | `constituency_parse` | Phrase-structure trees + node labels | stanza (Stanford stack exclusive) |
+| `dependency_parse` | Dependency parse: head, deprel, POS, morphological feats | stanza UD (zh) / spaCy → stanza |
+| `noun_phrases` | Base noun phrases (chunking) with roots | jieba rule-merge (zh, heuristic) / spaCy chunker |
+| `sentiment` | Sentiment classification (per-sentence) | stanza neural REN (zh) / NLTK VADER, stanza (en) |
 | `seme_lookup` | HowNet sememes (义原) lookup | OpenHowNet (zh) |
 | `wordnet_lookup` | Synsets, definitions, hypernyms | NLTK WordNet (en) |
 | `wordnet_similarity` | WordNet path similarity | NLTK WordNet (en) |

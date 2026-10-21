@@ -312,3 +312,81 @@ def test_forced_corenlp_on_chinese_degrades_honestly():
     assert r.get("requested_engine") == "corenlp"
     assert r.get("fallback") is True
     assert "English-only" in r.get("note", "")
+
+
+# ---------------------------------------------------------------------------
+# v0.3.0: dependency_parse / noun_phrases / sentiment (model-backed tier)
+# ---------------------------------------------------------------------------
+
+
+def test_dependency_parse_english_spacy():
+    from classic_nlp_mcp.server import dependency_parse
+
+    r = dependency_parse("Andromeda Security raised 30M dollars in Seattle.", "en")
+    assert r["engine"].startswith("spacy")
+    s = r["sentences"][0]
+    by_text = {w["text"]: w for w in s["words"]}
+    assert by_text["Security"]["deprel"] == "nsubj"
+    assert by_text["raised"]["head_text"] == "raised"  # ROOT points to itself
+
+
+def test_dependency_parse_chinese_stanza():
+    from classic_nlp_mcp.server import _stanza_for, dependency_parse
+
+    if not _stanza_for("zh"):
+        pytest.skip("stanza zh models not downloaded")
+    r = dependency_parse("新华三集团在杭州发布了新一代智能探针平台。", "zh")
+    assert r["engine"].startswith("stanza")
+    assert r["scheme"] == "universal-dependencies"
+    words = r["sentences"][0]["words"]
+    assert any(w["deprel"] == "nsubj" for w in words)
+
+
+def test_dependency_parse_chinese_rejects_jieba():
+    from classic_nlp_mcp.server import dependency_parse
+
+    with pytest.raises(ValueError, match="cannot dependency-parse Chinese"):
+        dependency_parse("测试句子。", "zh", engine="jieba")
+
+
+def test_noun_phrases_english():
+    from classic_nlp_mcp.server import noun_phrases
+
+    r = noun_phrases("Andromeda raised 30M dollars for an identity platform.", "en")
+    texts = [p["text"] for p in r["phrases"]]
+    assert any("identity platform" in t for t in texts)
+    assert all({"text", "start", "end", "root"} <= set(p) for p in r["phrases"])
+
+
+def test_noun_phrases_chinese_heuristic():
+    from classic_nlp_mcp.server import noun_phrases
+
+    r = noun_phrases("智能探针平台用于大模型内部机制研究。", "zh")
+    assert r["engine"].startswith("jieba")
+    assert any(p["text"] == "智能探针平台" for p in r["phrases"])
+
+
+def test_sentiment_english_vader():
+    from classic_nlp_mcp.server import sentiment
+
+    r = sentiment("This is a breakthrough product but the pricing is terrible.", "en")
+    assert r["engine"].startswith("nltk")
+    assert r["overall"] in ("negative", "mixed")
+    assert -1.0 <= r["scores"]["compound"] <= 1.0
+
+
+def test_sentiment_chinese_stanza():
+    from classic_nlp_mcp.server import _stanza_for, sentiment
+
+    if not _stanza_for("zh"):
+        pytest.skip("stanza zh models not downloaded")
+    r = sentiment("这家公司的产品非常好用。但是价格太贵了。", "zh")
+    assert r["engine"].startswith("stanza")
+    assert r["counts"]["positive"] >= 1 and r["counts"]["negative"] >= 1
+
+
+def test_sentiment_vader_forced_on_chinese_raises():
+    from classic_nlp_mcp.server import sentiment
+
+    with pytest.raises(ValueError, match="English-only"):
+        sentiment("很好", "zh", engine="nltk")
